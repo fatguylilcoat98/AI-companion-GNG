@@ -53,3 +53,24 @@ test('parseEnv: rlsEnforced is independent of the master switch', () => {
   assert.equal(result.flags.masterSwitch, false);
   assert.equal(result.flags.rlsEnforced, true);
 });
+
+test('parseEnv: PORT defaults to 3000 when unset', () => {
+  assert.equal(parseEnv({ DATABASE_URL: 'x' }).port, 3000);
+});
+
+test('parseEnv: a valid PORT is parsed', () => {
+  const result = parseEnv({ DATABASE_URL: 'x', PORT: '8080' });
+  assert.equal(result.ok, true);
+  assert.equal(result.port, 8080);
+});
+
+test('parseEnv: a non-numeric PORT is an error', () => {
+  const result = parseEnv({ DATABASE_URL: 'x', PORT: 'abc' });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.includes('PORT')));
+});
+
+test('parseEnv: an out-of-range PORT is an error', () => {
+  assert.equal(parseEnv({ DATABASE_URL: 'x', PORT: '0' }).ok, false);
+  assert.equal(parseEnv({ DATABASE_URL: 'x', PORT: '70000' }).ok, false);
+});
