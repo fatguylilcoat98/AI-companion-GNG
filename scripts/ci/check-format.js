@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO = process.cwd();
-const SCAN = ['.github', 'scripts', 'tests', 'docs'];
+const SCAN = ['.github', 'config', 'scripts', 'tests', 'docs'];
 const TEXT_EXT = /\.(js|cjs|mjs|ya?ml|json|md|sh)$/;
 
 function collect(rel, out) {

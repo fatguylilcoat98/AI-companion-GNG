@@ -1,21 +1,38 @@
 # Baseline CI
 
 Baseline governance-enforcement CI for the golden master template. It
-runs on every pull request and on push to `main`. Every check is a
-standard-library-only Node guard — no application code, no database, no
-network.
+runs on every pull request and on push to `main`. Most checks are
+standard-library-only Node guards — no application code, no database, no
+network. The **configuration contract** check is the one scoped
+exception (see "The ajv exception" below).
 
 ## What CI enforces today
 
 | Guard | Script | Enforces |
 |---|---|---|
-| Lint / format | `check-format.js` | Final newline, no trailing whitespace, and no focused tests (`.only(`) across the authored surface. |
+| Lint / format | `check-format.js` | Final newline, no trailing whitespace, and no focused tests (`.only(`) across the authored surface, including `config/`. |
 | Migration discipline | `check-migrations.js` | Numbered `NNN_*.sql` migrations only; no duplicate numbers; no stray `.sql` outside approved locations. |
 | Secret / env-file guard | `check-secrets.js` | No tracked `.env*` file except `.env.example`; `.env.example` holds blank placeholders only; no secret-shaped tokens (private-key blocks, provider key prefixes, AWS key ids, JSON web tokens) in tracked files. |
 | No real-data guard | `check-no-real-data.js` | No data-export file types tracked anywhere; the `seed/` tree confined to `seed/demo/`. |
 | No archived SQL guard | `check-no-archived-sql.js` | No `_archive` path anywhere — the master starts a clean migration chain. |
+| Configuration contract | `check-config-schema.js` | `companion.schema.json` compiles; `additionalProperties:false` on every object schema; the contract version agrees across schema and example; `companion.example.json` validates (template mode) with identity fields blank; every `tests/config/` fixture passes or fails as expected; deployed mode accepts a filled config and rejects a blank one. |
+| Contamination scanner | `check-contamination.js` | No known reference-system identifier (`Mattie`, `Sandy`, `MATTIE_SOUL`) in the scoped roots (`config/`, executable source). |
 
-All five guards are **enforced** — a violation fails the build.
+All seven guards are **enforced** — a violation fails the build.
+
+## The ajv exception
+
+`check-config-schema.js` is **not** standard-library-only: it depends on
+`ajv` (a pinned `devDependency`) through the shared validation core,
+`scripts/validate/validate-companion-config.js`. Correct JSON Schema
+draft 2020-12 validation must not be hand-rolled. This is a deliberate,
+scoped exception approved for the configuration-contract check only; the
+other six guards remain standard-library-only. The `config-validation`
+CI job runs `npm ci` before the guard.
+
+The validation core is shared on purpose: baseline CI uses it now, and
+the runtime config loader will use the same module once it is extracted,
+so the configuration contract has exactly one interpreter.
 
 ## What is scaffold / deferred
 
@@ -46,6 +63,8 @@ node scripts/ci/check-migrations.js
 node scripts/ci/check-secrets.js
 node scripts/ci/check-no-real-data.js
 node scripts/ci/check-no-archived-sql.js
+node scripts/ci/check-contamination.js
+npm ci && node scripts/ci/check-config-schema.js
 ```
 
 ## Promotion criteria

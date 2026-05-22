@@ -9,5 +9,8 @@
   },
   "scripts": {
     "setup": "echo \"GM-0 scaffold: no runnable scripts yet\" && exit 0"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1"
   }
 }
