@@ -1,0 +1,13 @@
+{
+  "name": "lylo-companion-template",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Lylo Companion — golden master template. Copy this repository to create a new companion instance; do not deploy it directly.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "setup": "echo \"GM-0 scaffold: no runnable scripts yet\" && exit 0"
+  }
+}
