@@ -22,6 +22,9 @@ Documentation for the Lylo Companion golden master template.
   is scaffold / deferred.
 - `governance/companion-configuration-boundary.md` — what belongs to the
   platform forever, and what is configurable per companion instance.
+- `governance/companion-config-contract.md` — the machine-enforceable
+  configuration contract: the JSON Schema, the physical mapping, and the
+  validation modes.
 
 ## Deployment
 
@@ -30,5 +33,5 @@ Documentation for the Lylo Companion golden master template.
 
 ## Status
 
-GM-4. The `deployment/` section is a placeholder until a later GM PR
+GM-5. The `deployment/` section is a placeholder until a later GM PR
 populates it.
