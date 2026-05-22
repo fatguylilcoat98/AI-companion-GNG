@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lylo-companion.template/schema/companion.schema/1.0.json",
+  "title": "Companion configuration",
+  "description": "The configuration contract for one companion instance. Validates config/companion.example.json (template mode) and the runtime configuration loaded from the companion_profile database row (deployed mode). See docs/governance/companion-config-contract.md. This schema describes structure, enums, and keys only; it cannot express the platform governance floor, which is enforced in code and database schema and is never configurable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "companion"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "The configuration contract version (MAJOR.MINOR). Config-file metadata; see the contract doc for evolution and version-mismatch rules."
+    },
+    "_comment": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "Optional human-readable note. Config-file metadata only; ignored at runtime and never persisted."
+    },
+    "companion": { "$ref": "#/$defs/companion" }
+  },
+  "$defs": {
+    "companion": {
+      "type": "object",
+      "description": "Isomorphic with the companion_profile row: name -> companion_name, persona -> persona, voice -> voice, safety -> safety.",
+      "additionalProperties": false,
+      "required": ["name", "persona", "voice", "safety"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 80,
+          "$comment": "deployed mode: must be non-empty; blank in the master template",
+          "description": "The companion's name. Maps to companion_profile.companion_name."
+        },
+        "persona": { "$ref": "#/$defs/persona" },
+        "voice": { "$ref": "#/$defs/voice" },
+        "safety": { "$ref": "#/$defs/safety" }
+      }
+    },
+    "persona": {
+      "type": "object",
+      "description": "Maps to companion_profile.persona (JSONB).",
+      "additionalProperties": false,
+      "required": [
+        "tone",
+        "speaking_style",
+        "values",
+        "warmth_level",
+        "cultural_tone",
+        "cultural_notes",
+        "faith_tone",
+        "faith_notes",
+        "topics",
+        "terminology",
+        "reminders"
+      ],
+      "properties": {
+        "tone": {
+          "type": "string",
+          "maxLength": 200,
+          "$comment": "deployed mode: must be non-empty; blank in the master template",
+          "description": "The companion's overall tone."
+        },
+        "speaking_style": {
+          "type": "string",
+          "maxLength": 200,
+          "$comment": "deployed mode: must be non-empty; blank in the master template",
+          "description": "How the companion phrases and paces what it says."
+        },
+        "values": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 60 },
+          "maxItems": 12,
+          "uniqueItems": true,
+          "description": "Optional short value statements. May be empty."
+        },
+        "warmth_level": {
+          "type": "string",
+          "enum": ["reserved", "standard", "warm"],
+          "default": "standard"
+        },
+        "cultural_tone": {
+          "type": "string",
+          "enum": ["none", "neutral", "responsive"],
+          "default": "none",
+          "description": "The companion's posture toward cultural context. Describes posture, never a specific culture; specifics belong in cultural_notes."
+        },
+        "cultural_notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional free-text explanation for cultural_tone. May be empty."
+        },
+        "faith_tone": {
+          "type": "string",
+          "enum": ["none", "neutral", "responsive"],
+          "default": "none",
+          "description": "The companion's posture toward faith. Describes posture, never a specific religion; specifics belong in faith_notes."
+        },
+        "faith_notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional free-text explanation for faith_tone. May be empty."
+        },
+        "topics": { "$ref": "#/$defs/topics" },
+        "terminology": { "$ref": "#/$defs/terminology" },
+        "reminders": { "$ref": "#/$defs/reminders" }
+      }
+    },
+    "topics": {
+      "type": "object",
+      "description": "Controlled-vocabulary topic preferences. 'disallowed' adds to the platform floor; it can never widen behavior past it.",
+      "additionalProperties": false,
+      "required": ["disallowed", "encouraged", "notes"],
+      "properties": {
+        "disallowed": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/topicTag" },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Topic tags this instance additionally restricts."
+        },
+        "encouraged": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/topicTag" },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Topic tags this instance leans into."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional free-text explanation. May be empty."
+        }
+      }
+    },
+    "terminology": {
+      "type": "object",
+      "description": "Wording the companion uses. Defaults are generic and always present.",
+      "additionalProperties": false,
+      "required": ["family_term", "caregiver_term", "supported_person_term"],
+      "properties": {
+        "family_term": { "type": "string", "minLength": 1, "maxLength": 60, "default": "family" },
+        "caregiver_term": { "type": "string", "minLength": 1, "maxLength": 60, "default": "caregiver" },
+        "supported_person_term": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "default": "the person you support"
+        }
+      }
+    },
+    "reminders": {
+      "type": "object",
+      "description": "Reminder presentation. Reminder delivery itself is a platform subsystem.",
+      "additionalProperties": false,
+      "required": ["style", "frequency"],
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": ["gentle", "neutral", "brisk"],
+          "default": "gentle"
+        },
+        "frequency": {
+          "type": "string",
+          "enum": ["as_scheduled", "minimal"],
+          "default": "as_scheduled"
+        }
+      }
+    },
+    "voice": {
+      "type": "object",
+      "description": "Maps to companion_profile.voice (JSONB).",
+      "additionalProperties": false,
+      "required": ["enabled", "voice_id", "speaking_rate"],
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "voice_id": {
+          "type": "string",
+          "maxLength": 200,
+          "$comment": "deployed mode: must be non-empty when enabled is true; enforced structurally by if/then below",
+          "description": "Provider voice identifier. Blank in the master template."
+        },
+        "speaking_rate": {
+          "type": "string",
+          "enum": ["slow", "normal"],
+          "default": "normal"
+        }
+      },
+      "if": {
+        "properties": { "enabled": { "const": true } },
+        "required": ["enabled"]
+      },
+      "then": {
+        "properties": { "voice_id": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "description": "Maps to companion_profile.safety (JSONB). Configuration here may only make the companion more cautious; it can never lower the platform safety floor.",
+      "additionalProperties": false,
+      "required": ["posture", "emotional_boundaries", "escalation"],
+      "properties": {
+        "posture": {
+          "type": "string",
+          "enum": ["standard", "heightened"],
+          "default": "standard",
+          "description": "Safety posture. 'standard' is the platform floor and the lowest representable value; no weaker posture can be expressed."
+        },
+        "emotional_boundaries": { "$ref": "#/$defs/emotionalBoundaries" },
+        "escalation": { "$ref": "#/$defs/escalation" }
+      }
+    },
+    "emotionalBoundaries": {
+      "type": "object",
+      "description": "Distress escalation is platform floor and is intentionally NOT configurable here. Every instance escalates distress per the platform safety floor.",
+      "additionalProperties": false,
+      "required": ["comfort_role"],
+      "properties": {
+        "comfort_role": {
+          "type": "string",
+          "enum": ["supportive_companion", "friendly_companion"],
+          "default": "supportive_companion",
+          "description": "The companion's comfort role. Clinical roles (therapist, clinician, counselor) are not representable values."
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "description": "Escalation routing preferences. That escalation occurs and is audited is platform floor; only the routing preference is configurable.",
+      "additionalProperties": false,
+      "required": ["preferred_channel", "contact_order"],
+      "properties": {
+        "preferred_channel": {
+          "type": "string",
+          "enum": ["circle", "operator"],
+          "default": "circle"
+        },
+        "contact_order": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["family", "caregiver", "operator"] },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Ordered escalation preference by role. Holds role tokens only — never names or contact details."
+        }
+      }
+    },
+    "topicTag": {
+      "type": "string",
+      "description": "The v1.0 controlled topic vocabulary. Extending this list is a MINOR version bump.",
+      "enum": [
+        "reminiscence",
+        "family",
+        "faith",
+        "hobbies",
+        "daily_routine",
+        "health",
+        "news",
+        "politics",
+        "finances",
+        "medical_guidance",
+        "legal_guidance"
+      ]
+    }
+  }
+}
