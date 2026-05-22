@@ -10,8 +10,14 @@ Documentation for the Lylo Companion golden master template.
 
 ## Governance
 
-- `governance/` — governance vocabulary, memory policy, and the
-  feature-flag model. Populated by a later GM-series PR.
+- `governance/governance-vocabulary-lock.md` — locked definitions of
+  every governance term.
+- `governance/source-of-truth-memory-policy.md` — how a claim becomes,
+  or is prevented from becoming, a trusted memory.
+- `governance/feature-flag-model.md` — the staged-rollout feature-flag
+  model.
+- `governance/owner-decisions-template.md` — decisions a deployment
+  owner records before creating an instance.
 
 ## Deployment
 
@@ -20,5 +26,5 @@ Documentation for the Lylo Companion golden master template.
 
 ## Status
 
-GM-0 scaffold. The `governance/` and `deployment/` sections are
-placeholders until later GM PRs populate them.
+GM-1. The `deployment/` section is a placeholder until a later GM PR
+populates it.
