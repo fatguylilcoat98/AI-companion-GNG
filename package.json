@@ -8,7 +8,8 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "setup": "echo \"GM-0 scaffold: no runnable scripts yet\" && exit 0"
+    "setup": "echo \"GM-0 scaffold: no runnable scripts yet\" && exit 0",
+    "test": "node --test tests/runtime/*.test.js"
   },
   "devDependencies": {
     "ajv": "8.17.1"

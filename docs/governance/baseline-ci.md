@@ -10,15 +10,22 @@ exception (see "The ajv exception" below).
 
 | Guard | Script | Enforces |
 |---|---|---|
-| Lint / format | `check-format.js` | Final newline, no trailing whitespace, and no focused tests (`.only(`) across the authored surface, including `config/`. |
+| Lint / format | `check-format.js` | Final newline, no trailing whitespace, and no focused tests (`.only(`) across the authored surface, including `config/` and `src/`. |
 | Migration discipline | `check-migrations.js` | Numbered `NNN_*.sql` migrations only; no duplicate numbers; no stray `.sql` outside approved locations. |
 | Secret / env-file guard | `check-secrets.js` | No tracked `.env*` file except `.env.example`; `.env.example` holds blank placeholders only; no secret-shaped tokens (private-key blocks, provider key prefixes, AWS key ids, JSON web tokens) in tracked files. |
 | No real-data guard | `check-no-real-data.js` | No data-export file types tracked anywhere; the `seed/` tree confined to `seed/demo/`. |
 | No archived SQL guard | `check-no-archived-sql.js` | No `_archive` path anywhere — the master starts a clean migration chain. |
 | Configuration contract | `check-config-schema.js` | `companion.schema.json` compiles; `additionalProperties:false` on every object schema; the contract version agrees across schema and example; `companion.example.json` validates (template mode) with identity fields blank; every `tests/config/` fixture passes or fails as expected; deployed mode accepts a filled config and rejects a blank one. |
-| Contamination scanner | `check-contamination.js` | No known reference-system identifier (`Mattie`, `Sandy`, `MATTIE_SOUL`) in the scoped roots (`config/`, executable source). |
+| Contamination scanner | `check-contamination.js` | No known reference-system identifier (`Mattie`, `Sandy`, `MATTIE_SOUL`) in the scoped roots (`config/`, `scripts/validate/`, `src/`). |
 
 All seven guards are **enforced** — a violation fails the build.
+
+## Runtime unit tests
+
+The `unit-tests` job runs the `node:test` unit suite for the pure
+runtime modules under `src/runtime/` (`tests/runtime/*.test.js`). It
+installs dependencies with `npm ci` because the validation-hook test
+exercises the shared validation core. A failing test fails the build.
 
 ## The ajv exception
 
