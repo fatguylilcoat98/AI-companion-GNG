@@ -33,5 +33,5 @@ Documentation for the Lylo Companion golden master template.
 
 ## Status
 
-GM-5. The `deployment/` section is a placeholder until a later GM PR
+GM-6. The `deployment/` section is a placeholder until a later GM PR
 populates it.

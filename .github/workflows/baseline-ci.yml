@@ -1,8 +1,10 @@
 name: Baseline CI
 
 # Baseline governance-enforcement CI for the golden master template.
-# Each job runs a standard-library-only Node guard — no application code,
-# no database, no network. See docs/governance/baseline-ci.md.
+# Most jobs run a standard-library-only Node guard — no application code,
+# no database, no network. The config-validation job is the one scoped
+# exception: it installs ajv (a pinned devDependency) to validate the
+# configuration contract. See docs/governance/baseline-ci.md.
 
 on:
   push:
@@ -26,8 +28,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Syntax-check CI scripts
-        run: find scripts/ci -name '*.js' -print0 | xargs -0 -r -n1 node --check
+      - name: Syntax-check scripts
+        run: find scripts -name '*.js' -print0 | xargs -0 -r -n1 node --check
       - name: Format check
         run: node scripts/ci/check-format.js
 
@@ -70,6 +72,28 @@ jobs:
         with:
           node-version: '20'
       - run: node scripts/ci/check-no-archived-sql.js
+
+  config-validation:
+    name: Configuration contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - run: node scripts/ci/check-config-schema.js
+
+  contamination-guard:
+    name: Contamination scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/ci/check-contamination.js
 
   rls-contract:
     name: RLS / privacy contract (scaffold)
