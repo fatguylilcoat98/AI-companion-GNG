@@ -18,6 +18,8 @@ Documentation for the Lylo Companion golden master template.
   model.
 - `governance/owner-decisions-template.md` — decisions a deployment
   owner records before creating an instance.
+- `governance/baseline-ci.md` — what the baseline CI enforces, and what
+  is scaffold / deferred.
 
 ## Deployment
 
@@ -26,5 +28,5 @@ Documentation for the Lylo Companion golden master template.
 
 ## Status
 
-GM-1. The `deployment/` section is a placeholder until a later GM PR
+GM-2. The `deployment/` section is a placeholder until a later GM PR
 populates it.

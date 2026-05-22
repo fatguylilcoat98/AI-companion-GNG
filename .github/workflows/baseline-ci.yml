@@ -1,0 +1,83 @@
+name: Baseline CI
+
+# Baseline governance-enforcement CI for the golden master template.
+# Each job runs a standard-library-only Node guard — no application code,
+# no database, no network. See docs/governance/baseline-ci.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: baseline-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-format:
+    name: Lint / format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Syntax-check CI scripts
+        run: find scripts/ci -name '*.js' -print0 | xargs -0 -r -n1 node --check
+      - name: Format check
+        run: node scripts/ci/check-format.js
+
+  migration-discipline:
+    name: Migration discipline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/ci/check-migrations.js
+
+  secret-guard:
+    name: Secret / env-file guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/ci/check-secrets.js
+
+  no-real-data-guard:
+    name: No real-data guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/ci/check-no-real-data.js
+
+  no-archived-sql-guard:
+    name: No archived SQL guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/ci/check-no-archived-sql.js
+
+  rls-contract:
+    name: RLS / privacy contract (scaffold)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Contract suite status
+        run: |
+          echo "The synthetic RLS/privacy contract suite is not yet ported."
+          echo "See tests/rls-contract/README.md. This job is a scaffold; it"
+          echo "will run the suite once it lands in a dedicated follow-up PR."
