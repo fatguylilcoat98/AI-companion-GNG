@@ -51,6 +51,18 @@ test('buildHealthResponse: an unknown path is 404', () => {
   assert.equal(buildHealthResponse('/secrets', baseCtx).statusCode, 404);
 });
 
+test('createHealthServer: sets requestTimeout and headersTimeout to 10s', () => {
+  const { createHealthServer } = require('../../src/runtime/health');
+  const server = createHealthServer({
+    getState: () => STATES.READY,
+    flags: { masterSwitch: true },
+    bootTimeMs: Date.now(),
+  });
+  assert.equal(server.requestTimeout, 10_000);
+  assert.equal(server.headersTimeout, 10_000);
+  server.close();
+});
+
 test('buildHealthResponse: no response exposes config, persona, profile, or secrets', () => {
   for (const path of ['/healthz', '/readyz', '/status', '/other']) {
     const serialized = JSON.stringify(buildHealthResponse(path, baseCtx).body);

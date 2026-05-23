@@ -52,7 +52,7 @@ function createHealthServer(options) {
   const flags = options.flags || {};
   const bootTimeMs = options.bootTimeMs || Date.now();
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     let pathname = '/';
     try {
       pathname = new URL(req.url, 'http://localhost').pathname;
@@ -68,6 +68,12 @@ function createHealthServer(options) {
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
   });
+  // Lifecycle hardening: a slow client must not hold a request open
+  // indefinitely. The Node defaults (5 min request, 1 min headers) are
+  // too lenient for a health endpoint.
+  server.requestTimeout = 10_000;
+  server.headersTimeout = 10_000;
+  return server;
 }
 
 module.exports = { createHealthServer, buildHealthResponse };

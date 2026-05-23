@@ -24,6 +24,14 @@ function log(message) {
   console.log(`[boot] ${message}`);
 }
 
+// Reduce any error to a coarse, non-sensitive class for logging.
+// pg errors can echo the connection string in their message; we never
+// log the message.
+function coarseError(err) {
+  if (!err) return 'unknown';
+  return err.code || err.name || 'unknown';
+}
+
 function listen(server, port) {
   return new Promise((resolve, reject) => {
     const onError = (err) => reject(err);
@@ -59,7 +67,7 @@ async function boot(rawEnv, options) {
     log('Layer-1 master switch is off — runtime is inert');
     currentState = STATES.INERT;
   } else {
-    pool = createPool(env.databaseUrl);
+    pool = createPool(env.databaseUrl, { log });
     const conn = await connectWithRetry(pool, { delaysMs: opts.dbRetryDelaysMs, log });
     if (!conn.connected) {
       log('database unreachable after retries');
@@ -115,30 +123,61 @@ async function boot(rawEnv, options) {
     if (monitor.unref) monitor.unref();
   }
 
-  async function shutdown() {
-    if (monitor) clearInterval(monitor);
-    await new Promise((resolve) => healthServer.close(resolve));
-    if (pool) await closePool(pool);
+  // Shutdown is idempotent — repeated invocations (e.g. a double
+  // SIGTERM from an orchestrator) return the in-flight promise object
+  // and produce no additional side effects. This deliberately is NOT
+  // an async function — an async wrapper would wrap the cached promise
+  // in a fresh one on every call, breaking idempotency.
+  let shuttingDown = null;
+  function shutdown() {
+    if (shuttingDown) return shuttingDown;
+    shuttingDown = (async () => {
+      if (monitor) clearInterval(monitor);
+      const closed = new Promise((resolve) => healthServer.close(resolve));
+      // Force-drain held keep-alive sockets so the health server cannot
+      // hang shutdown waiting for a slow client to release a connection.
+      if (typeof healthServer.closeAllConnections === 'function') {
+        healthServer.closeAllConnections();
+      }
+      await closed;
+      if (pool) await closePool(pool);
+    })();
+    return shuttingDown;
   }
 
   return { getState: () => currentState, shutdown };
 }
 
 if (require.main === module) {
+  // Fail-fast on programmer errors. A coarse class is logged — never
+  // the raw message, which could echo secrets — and the process exits
+  // non-zero so the orchestrator can restart it.
+  process.on('uncaughtException', (err) => {
+    console.log(`[boot] uncaughtException: ${coarseError(err)}`);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (err) => {
+    console.log(`[boot] unhandledRejection: ${coarseError(err)}`);
+    process.exit(1);
+  });
+
   boot(process.env)
     .then((handle) => {
       const stop = () => {
-        handle.shutdown().then(() => process.exit(0));
+        // A shutdown rejection must not silently hang the process; the
+        // finally clause guarantees the exit.
+        handle
+          .shutdown()
+          .catch((err) => {
+            console.log(`[boot] shutdown error: ${coarseError(err)}`);
+          })
+          .finally(() => process.exit(0));
       };
       process.on('SIGTERM', stop);
       process.on('SIGINT', stop);
     })
     .catch((err) => {
-      // The error message is intentionally NOT logged — pg errors can
-      // echo the connection string. The coarse class (code or name)
-      // is enough for an operator to diagnose without secret leakage.
-      const reason = err && (err.code || err.name) ? err.code || err.name : 'unknown';
-      console.log(`[boot] fatal: ${reason}`);
+      console.log(`[boot] fatal: ${coarseError(err)}`);
       process.exit(1);
     });
 }
