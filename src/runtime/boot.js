@@ -134,7 +134,11 @@ if (require.main === module) {
       process.on('SIGINT', stop);
     })
     .catch((err) => {
-      console.log(`[boot] fatal: ${err && err.message ? err.message : 'unknown'}`);
+      // The error message is intentionally NOT logged — pg errors can
+      // echo the connection string. The coarse class (code or name)
+      // is enough for an operator to diagnose without secret leakage.
+      const reason = err && (err.code || err.name) ? err.code || err.name : 'unknown';
+      console.log(`[boot] fatal: ${reason}`);
       process.exit(1);
     });
 }
