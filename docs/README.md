@@ -25,6 +25,8 @@ Documentation for the Lylo Companion golden master template.
 - `governance/companion-config-contract.md` — the machine-enforceable
   configuration contract: the JSON Schema, the physical mapping, and the
   validation modes.
+- `governance/runtime-boundary.md` — the locked runtime boundary the
+  configuration loader obeys, and the guards that enforce it.
 
 ## Deployment
 
@@ -33,5 +35,5 @@ Documentation for the Lylo Companion golden master template.
 
 ## Status
 
-GM-7b. The `deployment/` section is a placeholder until a later GM PR
+GM-8. The `deployment/` section is a placeholder until a later GM PR
 populates it.

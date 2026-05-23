@@ -17,8 +17,9 @@ exception (see "The ajv exception" below).
 | No archived SQL guard | `check-no-archived-sql.js` | No `_archive` path anywhere — the master starts a clean migration chain. |
 | Configuration contract | `check-config-schema.js` | `companion.schema.json` compiles; `additionalProperties:false` on every object schema; the contract version agrees across schema and example; `companion.example.json` validates (template mode) with identity fields blank; every `tests/config/` fixture passes or fails as expected; deployed mode accepts a filled config and rejects a blank one. |
 | Contamination scanner | `check-contamination.js` | No known reference-system identifier (`Mattie`, `Sandy`, `MATTIE_SOUL`) in the scoped roots (`config/`, `scripts/validate/`, `src/`). |
+| Runtime boundary guard | `check-runtime-boundary.js` | In `src/runtime/` and `src/db/`: no forbidden SQL keyword (`INSERT`/`UPDATE`/`DELETE`/`DROP`/`ALTER`/`TRUNCATE`/`GRANT`/`REVOKE`/`CREATE`); every `FROM`/`JOIN` references the locked allowlist (`pilot_instances`, `companion_profile`, `supported_person_profile`, `setup_state`); no model-SDK import (`openai`, `anthropic`, `@anthropic-ai/sdk`, `@openai/*`); `pg` is imported only by `src/db/client.js`. See `runtime-boundary.md`. |
 
-All seven guards are **enforced** — a violation fails the build.
+All eight guards are **enforced** — a violation fails the build.
 
 ## Runtime tests
 
@@ -76,6 +77,7 @@ node scripts/ci/check-secrets.js
 node scripts/ci/check-no-real-data.js
 node scripts/ci/check-no-archived-sql.js
 node scripts/ci/check-contamination.js
+node scripts/ci/check-runtime-boundary.js
 npm ci && node scripts/ci/check-config-schema.js
 ```
 
