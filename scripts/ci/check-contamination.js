@@ -28,7 +28,7 @@ const path = require('path');
 const REPO = process.cwd();
 
 // Must-be-clean roots. Extend this as executable code roots are added.
-const SCAN_ROOTS = ['config', 'scripts/validate', 'src'];
+const SCAN_ROOTS = ['config', 'scripts/setup', 'scripts/validate', 'src'];
 
 // This guard's own file — excluded so the denylist does not match itself.
 const SELF = 'scripts/ci/check-contamination.js';

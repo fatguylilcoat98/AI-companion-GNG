@@ -39,7 +39,7 @@ for the `ready` ⇄ `degraded` pair, which auto-recovers.
 | State | Liveness | Readiness | Entry conditions | Operator action |
 |---|---|---|---|---|
 | `inert` | 200 | 503 | `LYLO_SHELL_MODE` unset or `false` | Set `LYLO_SHELL_MODE=true` and restart |
-| `setup-incomplete` | 200 | 503 | Layer-1 on; `companion_profile` absent or with blank identity, or `supported_person_profile` absent | Complete Setup (a future GM); for now, seed the rows |
+| `setup-incomplete` | 200 | 503 | Layer-1 on; `companion_profile` absent or with blank identity, or `supported_person_profile` absent | Run `scripts/setup/provision-instance.js` (see `../setup/provisioning-contract.md`). A richer iterative wizard remains a future GM. |
 | `configuration-invalid` | 200 | 503 | Env malformed; DB unreachable after 4 attempts; pilot resolution failed; `companion_profile` structurally invalid | Diagnose with the log events (section 6 + section 9); fix; restart |
 | `ready` | 200 | 200 | Config deployed-valid + supported-person present + DB reachable | No action; healthy |
 | `degraded` | 200 | 503 | Was `ready`; the periodic DB ping failed | No action — auto-recovers to `ready` when the DB returns |
@@ -271,11 +271,12 @@ Unit tests (no database):
 npm test
 ```
 
-Integration tests (require a throwaway Postgres):
+Integration tests (require a throwaway Postgres). Run files serially —
+each `before` hook resets the schema, so concurrent files would race:
 
 ```sh
 DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DB' \
-node --test tests/integration/*.test.js
+node --test --test-concurrency=1 tests/integration/*.test.js
 ```
 
 ### Guards (run individually)
@@ -307,13 +308,19 @@ npm ci && node scripts/ci/check-config-schema.js
 
 ### `setup-incomplete`
 
-- No `companion_profile` row → Setup Mode (a future GM) is the
-  intended path; for now, seed the row manually using the blank-template
-  shape and then fill the identity fields.
-- `companion_profile` present with blank identity → Setup Mode is
-  pending completion.
-- No `supported_person_profile` row → seed the supported-person record
-  for the resolved pilot.
+- Fresh database (no `companion_profile`, no `supported_person_profile`)
+  → fill an answers file (start from `config/answers.example.json`)
+  and run `scripts/setup/provision-instance.js --answers ./answers.json`.
+  The script seeds all four required rows atomically and records a
+  paper-trail in `setup_state`. The runtime reaches `ready` on the next
+  boot. See `../setup/provisioning-contract.md`.
+- Partial seed (e.g. `companion_profile` present with blank identity,
+  or `supported_person_profile` absent against an existing pilot) →
+  `--force` is **not** implemented for destructive reseed in this
+  version. Resolve by dropping and recreating the database, re-applying
+  migrations, and running the provisioning script against the fresh
+  instance. A future PR may add deterministic non-destructive
+  re-provisioning.
 
 ### `degraded`
 
@@ -337,10 +344,11 @@ npm ci && node scripts/ci/check-config-schema.js
 Items intentionally absent from the current runtime and planned for
 later GMs:
 
-- **Setup Mode wizard** — the flow that populates `companion_profile`
-  and `supported_person_profile` from the blank-template shape. Until
-  it lands, partial configurations leave the runtime in
-  `setup-incomplete` and require manual seeding.
+- **Setup Mode wizard** — the **one-shot offline provisioning script**
+  is delivered (`scripts/setup/provision-instance.js`, see
+  `../setup/provisioning-contract.md`). A richer iterative wizard with
+  resumable per-step state, deterministic non-destructive
+  re-provisioning (`--force`), and a UI remains a future GM milestone.
 - **Companion behavior** — conversation, inference, reminders. Gated
   behind the RLS contract suite port and subsequent memory-governance
   extraction.
