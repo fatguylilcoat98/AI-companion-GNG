@@ -109,9 +109,13 @@ partial state is persisted.
 | `setup.complete` | info | All inserts committed |
 | `setup.fatal` | error | Unexpected error escaped `main()` |
 
-All entries are JSON-line through the structured logger
-(`src/runtime/log.js`). Raw error messages and the connection string
-are **never logged**.
+All entries are JSON-line through a dedicated provisioning logger
+(`scripts/setup/log.js`) that mirrors the shape of the runtime logger
+(`src/runtime/log.js`). The two loggers are sibling modules with
+identical output format so log aggregators see uniform entries from
+both processes. The provisioning script has **no imports** into
+`src/runtime/` or `src/db/`. Raw error messages and the connection
+string are **never logged**.
 
 ## Offline-only constraint
 

@@ -24,16 +24,19 @@
  *
  * Reads DATABASE_URL from the environment, identically to the runtime.
  *
- * Logging is structured JSON-line (src/runtime/log.js). The connection
+ * Logging is structured JSON-line (scripts/setup/log.js — a dedicated
+ * sibling logger that mirrors the shape of src/runtime/log.js so log
+ * consumers see a uniform format from both processes). The connection
  * string is never logged; database errors are reduced to a coarse
- * class.
+ * class. The provisioning script has zero imports into src/runtime/
+ * or src/db/ — the runtime/provisioning boundary is preserved.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseArgs } = require('node:util');
 const { Client } = require('pg');
-const logger = require('../../src/runtime/log');
+const logger = require('./log');
 const { validateCompanionConfig } = require('../validate/validate-companion-config');
 
 // Required answers identity fields. Blank values are an error.
