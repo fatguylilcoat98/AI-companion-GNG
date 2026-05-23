@@ -250,3 +250,41 @@ test('configuration-invalid: database unreachable', async () => {
     await handle.shutdown();
   }
 });
+
+test('shutdown: idempotent and force-closes held keep-alive sockets', async () => {
+  await withDb(async (c) => {
+    await reset(c);
+    const pid = await seedPilot(c);
+    const uid = await seedSenior(c, pid);
+    await seedCompanionProfile(c, pid, filledCompanion);
+    await seedSupportedPerson(c, pid, uid);
+  });
+  const handle = await boot(
+    { DATABASE_URL, PORT: String(TEST_PORT), LYLO_SHELL_MODE: 'true' },
+    { dbRetryDelaysMs: FAST_DELAYS }
+  );
+  assert.equal(handle.getState(), 'ready');
+
+  // Open a keep-alive connection that we deliberately do not release.
+  // Without closeAllConnections, the held socket would force shutdown
+  // to wait up to keepAliveTimeout.
+  const agent = new http.Agent({ keepAlive: true });
+  await new Promise((resolve, reject) => {
+    http
+      .get({ host: '127.0.0.1', port: TEST_PORT, path: '/healthz', agent }, (res) => {
+        res.on('data', () => {});
+        res.on('end', resolve);
+      })
+      .on('error', reject);
+  });
+
+  const start = Date.now();
+  const p1 = handle.shutdown();
+  const p2 = handle.shutdown();
+  assert.equal(p1, p2, 'shutdown() must return the same promise on re-entry');
+  await Promise.all([p1, p2]);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 2000, `shutdown should complete promptly, took ${elapsed}ms`);
+
+  agent.destroy();
+});

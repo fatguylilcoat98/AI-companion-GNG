@@ -28,15 +28,24 @@ function describeDbError(err) {
 }
 
 // Create the connection pool. The connection string is held only by the
-// pool object; it is never logged.
-function createPool(databaseUrl) {
-  return new Pool({
+// pool object; it is never logged. An optional `log` callback receives
+// the coarse class of any idle-pool error so a transient backend
+// failure does not become an unhandled 'error' event (and crash the
+// process).
+function createPool(databaseUrl, options) {
+  const opts = options || {};
+  const log = opts.log || (() => {});
+  const pool = new Pool({
     connectionString: databaseUrl,
     max: 3,
     connectionTimeoutMillis: 5000,
     idleTimeoutMillis: 10000,
     statement_timeout: 5000,
   });
+  pool.on('error', (err) => {
+    log(`database pool error: ${describeDbError(err)}`);
+  });
+  return pool;
 }
 
 /*
