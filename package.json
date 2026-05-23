@@ -9,9 +9,13 @@
   },
   "scripts": {
     "setup": "echo \"GM-0 scaffold: no runnable scripts yet\" && exit 0",
+    "start": "node src/runtime/boot.js",
     "test": "node --test tests/runtime/*.test.js"
   },
   "devDependencies": {
     "ajv": "8.17.1"
+  },
+  "dependencies": {
+    "pg": "8.21.0"
   }
 }

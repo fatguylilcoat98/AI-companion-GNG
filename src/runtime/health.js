@@ -1,0 +1,73 @@
+'use strict';
+/*
+ * Health / readiness HTTP server.
+ *
+ * Exposes three endpoints over Node's standard-library http — no web
+ * framework. The server is given only non-sensitive inputs: the current
+ * runtime state, feature-flag booleans, and the boot time. It has no
+ * access to the configuration, persona, or any profile, so it cannot
+ * leak them.
+ */
+
+const http = require('node:http');
+const { isReady } = require('./runtime-state');
+
+/*
+ * Build the response for a request path. Pure.
+ *   pathname - the request path
+ *   ctx      - { state, flags, bootTimeMs, nowMs }
+ * Returns { statusCode, body }.
+ */
+function buildHealthResponse(pathname, ctx) {
+  const ready = isReady(ctx.state);
+
+  if (pathname === '/healthz') {
+    return { statusCode: 200, body: { status: 'live' } };
+  }
+  if (pathname === '/readyz') {
+    return { statusCode: ready ? 200 : 503, body: { state: ctx.state, ready } };
+  }
+  if (pathname === '/status') {
+    return {
+      statusCode: 200,
+      body: {
+        state: ctx.state,
+        ready,
+        uptimeSeconds: Math.max(0, Math.floor((ctx.nowMs - ctx.bootTimeMs) / 1000)),
+        flags: ctx.flags,
+      },
+    };
+  }
+  return { statusCode: 404, body: { error: 'not found' } };
+}
+
+/*
+ * Create the health server.
+ *   options - { getState, flags, bootTimeMs }
+ * getState is a callback so the server always reports the current
+ * runtime state, which may move between ready and degraded.
+ */
+function createHealthServer(options) {
+  const getState = options.getState;
+  const flags = options.flags || {};
+  const bootTimeMs = options.bootTimeMs || Date.now();
+
+  return http.createServer((req, res) => {
+    let pathname = '/';
+    try {
+      pathname = new URL(req.url, 'http://localhost').pathname;
+    } catch {
+      pathname = '/';
+    }
+    const { statusCode, body } = buildHealthResponse(pathname, {
+      state: getState(),
+      flags,
+      bootTimeMs,
+      nowMs: Date.now(),
+    });
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  });
+}
+
+module.exports = { createHealthServer, buildHealthResponse };

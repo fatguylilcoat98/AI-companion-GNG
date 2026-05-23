@@ -29,12 +29,30 @@ const BOOLEAN_FLAGS = Object.freeze({
 const TRUE_VALUES = new Set(['true', '1']);
 const FALSE_VALUES = new Set(['false', '0', '']);
 
+// Health/readiness server port. Defaults to 3000 when PORT is unset.
+const DEFAULT_PORT = 3000;
+
 function parseBoolean(raw) {
   if (raw === undefined || raw === null) return { value: false, error: null };
   const norm = String(raw).trim().toLowerCase();
   if (TRUE_VALUES.has(norm)) return { value: true, error: null };
   if (FALSE_VALUES.has(norm)) return { value: false, error: null };
   return { value: false, error: `expected a boolean (true/false), got "${raw}"` };
+}
+
+function parsePort(raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return { value: DEFAULT_PORT, error: null };
+  }
+  const norm = String(raw).trim();
+  if (!/^[0-9]+$/.test(norm)) {
+    return { value: DEFAULT_PORT, error: `expected an integer, got "${raw}"` };
+  }
+  const n = Number(norm);
+  if (n < 1 || n > 65535) {
+    return { value: DEFAULT_PORT, error: `expected a port in 1-65535, got "${raw}"` };
+  }
+  return { value: n, error: null };
 }
 
 /*
@@ -64,10 +82,15 @@ function parseEnv(rawEnv) {
   }
 
   // Optional pilot pin. When present it must later match the single
-  // pilot_instances row; that cross-check is the loader's job (GM-7b).
+  // pilot_instances row; that cross-check is the loader's job.
   const pilotInstanceId = env.PILOT_INSTANCE_ID
     ? String(env.PILOT_INSTANCE_ID).trim()
     : null;
+
+  // Health/readiness server port. An unparseable PORT is an error,
+  // which the boot sequence treats as configuration-invalid.
+  const { value: port, error: portError } = parsePort(env.PORT);
+  if (portError) errors.push(`PORT: ${portError}`);
 
   return {
     ok: errors.length === 0,
@@ -75,7 +98,8 @@ function parseEnv(rawEnv) {
     flags,
     databaseUrl,
     pilotInstanceId,
+    port,
   };
 }
 
-module.exports = { parseEnv, BOOLEAN_FLAGS };
+module.exports = { parseEnv, parsePort, BOOLEAN_FLAGS, DEFAULT_PORT };

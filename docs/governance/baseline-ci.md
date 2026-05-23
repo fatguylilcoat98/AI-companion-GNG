@@ -20,12 +20,17 @@ exception (see "The ajv exception" below).
 
 All seven guards are **enforced** — a violation fails the build.
 
-## Runtime unit tests
+## Runtime tests
 
-The `unit-tests` job runs the `node:test` unit suite for the pure
-runtime modules under `src/runtime/` (`tests/runtime/*.test.js`). It
-installs dependencies with `npm ci` because the validation-hook test
-exercises the shared validation core. A failing test fails the build.
+- The **`unit-tests`** job runs the `node:test` unit suite for the
+  runtime modules under `src/` (`tests/runtime/*.test.js`). It installs
+  dependencies with `npm ci`.
+- The **`integration-tests`** job boots the runtime against a
+  throwaway **Postgres 16 service container** and asserts the runtime
+  state and health output for each seed scenario
+  (`tests/integration/*.test.js`).
+
+A failing test in either job fails the build.
 
 ## The ajv exception
 
