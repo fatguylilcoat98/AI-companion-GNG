@@ -25,11 +25,29 @@ Create the instance's own database (Supabase) and run the master
 migrations in `db/migrations/` against it. The master ships no client
 data, so the instance starts empty.
 
-### 4. Run Setup
+### 4. Run Setup (provision the instance)
 
-Run Setup Mode to create the companion and its supported person, and to
-record the family / circle contacts. This is where instance-specific
-data is entered — in the instance, never in the master.
+Fill the per-instance answers file (copy `config/answers.example.json`
+in the instance, supply identity values) and run the **one-shot,
+offline** provisioning script:
+
+```sh
+DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DB' \
+node scripts/setup/provision-instance.js --answers ./answers.json
+```
+
+The script validates the answers in deployed mode (against
+`config/companion.schema.json`), seeds the four required rows
+(`pilot_instances`, the senior `users` row, `companion_profile`,
+`supported_person_profile`) inside one transaction, and records a
+paper-trail row in `setup_state` per step. Run while the runtime is
+**not** mounted against the same database. See
+`provisioning-contract.md` for the full contract, the answers shape,
+the idempotency rules (`--force` is reserved for a future PR), and the
+event-name catalog.
+
+Family / authorized-circle contacts and any richer iterative wizard
+remain a later GM milestone.
 
 ### 5. Deploy
 

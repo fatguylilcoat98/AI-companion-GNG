@@ -143,7 +143,9 @@ jobs:
       - name: Run integration tests
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/lylo_test
-        run: node --test tests/integration/*.test.js
+        # Serial file execution: each test file's `before` hook resets
+        # the schema, so files must not race on the same database.
+        run: node --test --test-concurrency=1 tests/integration/*.test.js
 
   rls-contract:
     name: RLS / privacy contract (scaffold)

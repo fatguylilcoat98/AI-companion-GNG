@@ -7,6 +7,9 @@ Documentation for the Lylo Companion golden master template.
 - `setup/instance-copy-workflow.md` — how to produce a new companion
   instance from this master.
 - `setup/template-boundaries.md` — what must never enter the master.
+- `setup/provisioning-contract.md` — the one-shot offline provisioning
+  script, the answers file shape, idempotency rules, and the event
+  catalog.
 
 ## Governance
 
@@ -38,5 +41,5 @@ Documentation for the Lylo Companion golden master template.
 
 ## Status
 
-GM-11. The Render / Supabase portions of the `deployment/` section are
+GM-12. The Render / Supabase portions of the `deployment/` section are
 still placeholders until a later GM PR populates them.

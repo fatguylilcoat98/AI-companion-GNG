@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "_comment": "Per-instance provisioning answers for scripts/setup/provision-instance.js. Placeholder / template values only — identity fields are intentionally blank. A copied instance fills these in once, before running the provisioning script, and the resulting file is never committed back to the master template. See docs/setup/provisioning-contract.md.",
+  "pilot": {
+    "org_name": ""
+  },
+  "senior": {
+    "username": ""
+  },
+  "supported_person": {
+    "display_name": "",
+    "timezone": "",
+    "locale": ""
+  },
+  "companion": {
+    "name": "",
+    "persona": {
+      "tone": "",
+      "speaking_style": "",
+      "values": [],
+      "warmth_level": "standard",
+      "cultural_tone": "none",
+      "cultural_notes": "",
+      "faith_tone": "none",
+      "faith_notes": "",
+      "topics": {
+        "disallowed": [],
+        "encouraged": [],
+        "notes": ""
+      },
+      "terminology": {
+        "family_term": "family",
+        "caregiver_term": "caregiver",
+        "supported_person_term": "the person you support"
+      },
+      "reminders": {
+        "style": "gentle",
+        "frequency": "as_scheduled"
+      }
+    },
+    "voice": {
+      "enabled": false,
+      "voice_id": "",
+      "speaking_rate": "normal"
+    },
+    "safety": {
+      "posture": "standard",
+      "emotional_boundaries": {
+        "comfort_role": "supportive_companion"
+      },
+      "escalation": {
+        "preferred_channel": "circle",
+        "contact_order": []
+      }
+    }
+  }
+}
