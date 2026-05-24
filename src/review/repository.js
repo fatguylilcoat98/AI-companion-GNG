@@ -499,6 +499,138 @@ async function inspectExecutionClaim(client, sessionCtx, claimId) {
   return result.rows.length === 0 ? null : result.rows[0];
 }
 
+// ---------------------------------------------------------------------
+// GM-27: execution-attempt read + write surface.
+// ---------------------------------------------------------------------
+//
+// Constitutional rule (the most important in the chain so far):
+//
+//   ATTEMPT IS NOT OUTCOME.
+//
+// recordExecutionAttempt records ONLY that an attempt began. It
+// does NOT record success, failure, completion, interruption,
+// delivery, dispatch, finalization, or commit state. The actor
+// file (src/actors/execution-attempt-ledger-actor.js) is
+// mechanically forbidden from containing those words by the
+// boundary guard's file-scoped vocabulary scan (per OQ-27.14).
+//
+// Inputs:
+//   - executionClaimId  — UUID of the claim this attempt
+//     references. UNIQUE(execution_claim_id) on the table
+//     forbids retry / multi-attempt semantics in GM-27.
+//   - authorizationScope — locked AUTHORIZATION_SCOPES value;
+//     MUST equal the claim's scope (DB trigger asserts).
+//   - executionSurface  — locked EXECUTION_SURFACES value;
+//     MUST equal the claim's surface (DB trigger asserts).
+//
+// Session-context invariants (all from sessionCtx, never from
+// input):
+//   - attempted_by_user_id  — sessionCtx.userId. RLS WITH CHECK
+//     enforces match against current_setting('app.user_id').
+//   - attempted_by_role     — sessionCtx.userRole. RLS WITH
+//     CHECK enforces admin role.
+//   - pilot_instance_id     — sessionCtx.pilotInstanceId. RLS
+//     WITH CHECK enforces match against
+//     current_setting('app.pilot_instance_id').
+//
+// Five DB-side data preconditions enforced by BEFORE-INSERT
+// trigger (NOT duplicated at this layer):
+//   (a) claim exists in same pilot
+//   (b) authorization_scope on attempt == claim's scope
+//   (c) execution_surface on attempt == claim's surface
+//   (d) attempter ≠ claimant (self-attempt forbidden)
+//   (e) chain attempt → claim → authorization → review_decision
+//       resolves to review_outcome = 'approved'
+
+async function recordExecutionAttempt(client, sessionCtx, input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('recordExecutionAttempt: input is required');
+  }
+  const { executionClaimId, authorizationScope, executionSurface } = input;
+
+  if (typeof executionClaimId !== 'string' || !UUID_RE.test(executionClaimId)) {
+    throw new Error('recordExecutionAttempt: executionClaimId must be a UUID');
+  }
+  if (!VALID_AUTHORIZATION_SCOPES.has(authorizationScope)) {
+    throw new Error(
+      `recordExecutionAttempt: authorizationScope must be one of ${Array.from(VALID_AUTHORIZATION_SCOPES).join(', ')}`
+    );
+  }
+  if (!VALID_EXECUTION_SURFACES.has(executionSurface)) {
+    throw new Error(
+      `recordExecutionAttempt: executionSurface must be one of ${Array.from(VALID_EXECUTION_SURFACES).join(', ')}`
+    );
+  }
+  // attempted_by_role is constrained at the actor + DB CHECK +
+  // RLS. The repository asserts it again so a future caller
+  // that bypasses the actor still gets a clean failure.
+  if (!VALID_CLAIM_ROLES.has(sessionCtx.userRole)) {
+    throw new Error(
+      `recordExecutionAttempt: sessionCtx.userRole must be one of ${Array.from(VALID_CLAIM_ROLES).join(', ')}`
+    );
+  }
+
+  const inserted = await client.query(
+    'INSERT INTO governance_execution_attempts '
+      + '(pilot_instance_id, execution_claim_id, authorization_scope, '
+      + 'execution_surface, attempted_by_user_id, attempted_by_role) '
+      + 'VALUES ($1, $2, $3, $4, $5, $6) '
+      + 'RETURNING id, created_at',
+    [
+      sessionCtx.pilotInstanceId,
+      executionClaimId,
+      authorizationScope,
+      executionSurface,
+      sessionCtx.userId,
+      sessionCtx.userRole,
+    ]
+  );
+
+  return {
+    id: inserted.rows[0].id,
+    created_at: inserted.rows[0].created_at,
+  };
+}
+
+// listExecutionAttempts — admin-only listing. RLS narrows by
+// pilot + admin role. Bounded by DEFAULT_LIST_LIMIT /
+// MAX_LIST_LIMIT.
+async function listExecutionAttempts(client, sessionCtx, options) {
+  const opts = options || {};
+  const requestedLimit = opts.limit;
+  let limit = DEFAULT_LIST_LIMIT;
+  if (requestedLimit !== undefined) {
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      throw new Error('listExecutionAttempts: limit must be a positive integer');
+    }
+    limit = Math.min(requestedLimit, MAX_LIST_LIMIT);
+  }
+  const result = await client.query(
+    'SELECT id, execution_claim_id, authorization_scope, '
+      + 'execution_surface, attempted_by_user_id, attempted_by_role, created_at '
+      + 'FROM governance_execution_attempts '
+      + 'ORDER BY created_at DESC '
+      + 'LIMIT $1',
+    [limit]
+  );
+  return result.rows;
+}
+
+// inspectExecutionAttempt — admin-only single-row lookup.
+async function inspectExecutionAttempt(client, sessionCtx, attemptId) {
+  if (typeof attemptId !== 'string' || !UUID_RE.test(attemptId)) {
+    throw new Error('inspectExecutionAttempt: attemptId must be a UUID');
+  }
+  const result = await client.query(
+    'SELECT id, execution_claim_id, authorization_scope, '
+      + 'execution_surface, attempted_by_user_id, attempted_by_role, created_at '
+      + 'FROM governance_execution_attempts '
+      + 'WHERE id = $1',
+    [attemptId]
+  );
+  return result.rows.length === 0 ? null : result.rows[0];
+}
+
 module.exports = {
   stageReviewItem,
   listPendingReviewItems,
@@ -510,6 +642,9 @@ module.exports = {
   recordExecutionClaim,
   listExecutionClaims,
   inspectExecutionClaim,
+  recordExecutionAttempt,
+  listExecutionAttempts,
+  inspectExecutionAttempt,
   VALID_DECISION_INTENT_TYPES,
   VALID_DECISION_REASONS,
   VALID_PROPOSER_ROLES,

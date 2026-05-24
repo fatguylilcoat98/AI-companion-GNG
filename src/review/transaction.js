@@ -63,6 +63,9 @@ const {
   recordExecutionClaim,
   listExecutionClaims,
   inspectExecutionClaim,
+  recordExecutionAttempt,
+  listExecutionAttempts,
+  inspectExecutionAttempt,
 } = require('./repository');
 
 function buildCtx(client, sessionCtx) {
@@ -89,6 +92,13 @@ function buildCtx(client, sessionCtx) {
       listExecutionClaims(client, sessionCtx, options),
     inspectExecutionClaim: (claimId) =>
       inspectExecutionClaim(client, sessionCtx, claimId),
+    // GM-27: execution-attempt read + write.
+    recordExecutionAttempt: (input) =>
+      recordExecutionAttempt(client, sessionCtx, input),
+    listExecutionAttempts: (options) =>
+      listExecutionAttempts(client, sessionCtx, options),
+    inspectExecutionAttempt: (attemptId) =>
+      inspectExecutionAttempt(client, sessionCtx, attemptId),
   };
 }
 

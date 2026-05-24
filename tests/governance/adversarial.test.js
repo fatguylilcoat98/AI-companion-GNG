@@ -266,9 +266,10 @@ test('C1. EVENT_TYPES snapshot: the GM-18-locked memory-audit vocabulary is unch
   // they don't go through governance_audit_log.
 });
 
-test('C2. REASONS snapshot: GM-21 vocabulary + GM-24 + GM-25 + GM-26 additions.', () => {
+test('C2. REASONS snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 additions.', () => {
   const SNAPSHOT = [
     'ai_inferred_requires_review',
+    'execution_attempt_recording_permitted',
     'execution_authorization_recording_permitted',
     'execution_claim_recording_permitted',
     'external_side_effects_not_authorized',
@@ -288,9 +289,10 @@ test('C2. REASONS snapshot: GM-21 vocabulary + GM-24 + GM-25 + GM-26 additions.'
     'governance REASONS snapshot drifted — adding reasons requires paired updates to docs/governance/');
 });
 
-test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + GM-24 + GM-25 + GM-26 additions.', () => {
+test('C3. INTENT_TYPES snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 additions.', () => {
   const SNAPSHOT = [
     'external.side_effect',
+    'governance.execution.attempt',
     'governance.execution.authorize',
     'governance.execution.claim',
     'governance.review.decide',
@@ -307,11 +309,14 @@ test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + GM-24 + GM-25 + GM-26 addition
     'INTENT_TYPES snapshot drifted — adding intent types requires paired updates to docs/governance/');
 });
 
-test('C4. OUTCOMES snapshot: GM-22/23/24/25 + the GM-26 addition (claim_recorded).', () => {
-  // GM-26 added exactly one actor outcome. The seven-way set is
+test('C4. OUTCOMES snapshot: GM-22 through GM-26 + the GM-27 addition (attempt_recorded).', () => {
+  // GM-27 added exactly one actor outcome. The eight-way set is
   // locked here; any future widening must update this snapshot
   // alongside docs/governance/actor-runtime-boundary.md.
-  const SNAPSHOT = ['abstained', 'authorized_recorded', 'claim_recorded', 'executed', 'recorded', 'rejected', 'staged'];
+  const SNAPSHOT = [
+    'abstained', 'attempt_recorded', 'authorized_recorded',
+    'claim_recorded', 'executed', 'recorded', 'rejected', 'staged',
+  ];
   const current = Object.values(OUTCOMES).sort();
   assert.deepEqual(current, SNAPSHOT.sort(),
     'actor OUTCOMES snapshot drifted — adding outcomes requires paired updates to actor-runtime-boundary.md');
@@ -1279,4 +1284,296 @@ test('H28. File-scoped forbidden-vocabulary scan: execution-claim-ledger actor m
   assert.deepEqual(hits, [],
     `H28: execution-claim-ledger actor contains forbidden operational vocabulary: ${hits.join(', ')}. `
     + 'Claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success.');
+});
+
+// ===================================================================
+// I. GM-27 execution-attempt ledger actor adversarial probes
+// ===================================================================
+
+const { createExecutionAttemptLedgerActor } = require('../../src/actors');
+
+const EXECUTION_CLAIM_ID = 'bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb';
+
+function makeMockAttemptPool() {
+  const queries = [];
+  let connectCalls = 0;
+  const client = {
+    queries,
+    async query(text) {
+      queries.push(text);
+      if (/RETURNING/i.test(text)) {
+        return { rows: [{ id: 'aaaaaaaa-9999-9999-9999-aaaaaaaaaaaa', created_at: new Date() }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => {},
+  };
+  return {
+    getQueries: () => queries,
+    getConnectCalls: () => connectCalls,
+    connect: async () => { connectCalls += 1; return client; },
+  };
+}
+
+function baseAttemptParams() {
+  return {
+    pilotInstanceId: PILOT,
+    userId: ADMIN,
+    userRole: 'admin',
+    executionClaimId: EXECUTION_CLAIM_ID,
+    authorizationScope: 'memory_candidate_admission',
+    executionSurface: 'future_memory_admission_consumer',
+  };
+}
+
+test('I1. Plain-object Decision to attempt-ledger actor → throws (instanceof fails); pool not consulted.', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_ATTEMPT_RECORDING_PERMITTED,
+    policyRef: 'execution-attempt-runtime-boundary.md §3',
+  };
+  await assert.rejects(() => actor.execute(fake, baseAttemptParams()), /must be a Decision instance/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I2. Prototype-tampered Decision passes instanceof but isValidDecision rejects → throws.', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_ATTEMPT_RECORDING_PERMITTED,
+    policyRef: 'execution-attempt-runtime-boundary.md §3',
+  };
+  Object.setPrototypeOf(fake, Decision.prototype);
+  Object.freeze(fake);
+  assert.ok(fake instanceof Decision);
+  await assert.rejects(() => actor.execute(fake, baseAttemptParams()), /prototype tampering or forgery/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I3. Real Decision with wrong intent type (governance.execution.claim) → throws (layer-4).', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM });
+  await assert.rejects(
+    () => actor.execute(wrong, baseAttemptParams()),
+    /decision\.intentType must be "governance\.execution\.attempt"/
+  );
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I4. Real Decision with governance.review.decide intent → throws (layer-4).', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_REVIEW_DECIDE });
+  await assert.rejects(() => actor.execute(wrong, baseAttemptParams()), /intentType/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I5. Non-admin userRole rejected BEFORE pool.connect.', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT });
+  for (const role of ['senior', 'family', 'caregiver', 'system']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseAttemptParams(), userRole: role }),
+      /userRole must be "admin"/,
+      `non-admin role ${role} should be rejected`
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I6. authorizationScope outside locked vocabulary → throws.', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT });
+  for (const bad of ['arbitrary_action', '', 'MEMORY_CANDIDATE_ADMISSION']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseAttemptParams(), authorizationScope: bad }),
+      /authorizationScope must be one of/
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I7. executionSurface outside locked vocabulary → throws.', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT });
+  for (const bad of ['arbitrary_consumer', '', 'memory_admission_consumer']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseAttemptParams(), executionSurface: bad }),
+      /executionSurface must be one of/
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I8. executionClaimId / pilotInstanceId / userId non-UUID → throws BEFORE pool.connect.', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT });
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseAttemptParams(), executionClaimId: 'not-uuid' }),
+    /executionClaimId must be a UUID/
+  );
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseAttemptParams(), pilotInstanceId: 'x' }),
+    /pilotInstanceId must be a UUID/
+  );
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseAttemptParams(), userId: 'y' }),
+    /userId must be a UUID/
+  );
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('I21. Attempter impersonation by input: attemptedByUserId in params is silently ignored.', async () => {
+  const pool = makeMockAttemptPool();
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT });
+  await actor.execute(
+    decision,
+    Object.assign(baseAttemptParams(), { attemptedByUserId: '99999999-9999-9999-9999-999999999999' })
+  );
+  assert.equal(pool.getConnectCalls(), 1);
+});
+
+test('I14. Sentinel content in unknown params field never appears in captured logs.', async () => {
+  const SENTINEL = 'I14_SECRET_AAA';
+  const pool = makeMockAttemptPool();
+  const captured = [];
+  const log = {
+    info(event, fields) {
+      captured.push(JSON.stringify({ ts: 'X', level: 'info', event, pid: 0, ...(fields || {}) }));
+    },
+  };
+  const actor = createExecutionAttemptLedgerActor({ reviewQueuePool: pool, log });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT });
+  await actor.execute(
+    decision,
+    Object.assign(baseAttemptParams(), { attempterNotes: SENTINEL, payload: SENTINEL })
+  );
+  const text = captured.join('\n');
+  assert.equal(text.includes(SENTINEL), false, 'unknown-field sentinel must not appear in logs');
+  assert.ok(text.includes('actor.execution_attempt.recorded'));
+});
+
+test('I15. EVENT_TYPES snapshot still locked — GM-27 added NO new audit event types.', () => {
+  const SNAPSHOT = ['memory.created', 'memory.list'];
+  const current = Object.values(memoryAudit.EVENT_TYPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'GM-27 must not widen memory EVENT_TYPES — the attempts table IS the artifact');
+});
+
+test('I20. AUTHORIZATION_SCOPES + EXECUTION_SURFACES snapshots unchanged by GM-27.', () => {
+  const {
+    VALID_AUTHORIZATION_SCOPES,
+    VALID_EXECUTION_SURFACES,
+  } = require('../../src/review/repository');
+  // GM-25's AUTHORIZATION_SCOPES (4 values).
+  assert.deepEqual(
+    Array.from(VALID_AUTHORIZATION_SCOPES).sort(),
+    [
+      'future_external_action',
+      'future_visibility_change',
+      'future_vault_action',
+      'memory_candidate_admission',
+    ].sort()
+  );
+  // GM-26's EXECUTION_SURFACES (4 values, all future_* prefixed).
+  const surfaces = Array.from(VALID_EXECUTION_SURFACES).sort();
+  assert.deepEqual(surfaces, [
+    'future_external_action_consumer',
+    'future_memory_admission_consumer',
+    'future_vault_action_consumer',
+    'future_visibility_change_consumer',
+  ].sort());
+  for (const s of surfaces) {
+    assert.match(s, /^future_/, `EXECUTION_SURFACES "${s}" must remain future_* prefixed`);
+  }
+});
+
+test('I23. Static scan: zero references to governance_execution_attempts outside the writing path.', () => {
+  // The I-series canary: greps src/ and scripts/ci for the table
+  // name and asserts the count matches the known writing-path
+  // files. Any additional reference is a potential consumer leak.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const WRITING_PATH = new Set([
+    'src/review/repository.js',
+    'src/review/transaction.js',
+    'src/review/index.js',
+    'src/actors/execution-attempt-ledger-actor.js',
+    'src/actors/outcomes.js',
+    'src/actors/index.js',
+    'scripts/ci/check-review-boundary.js',
+  ]);
+  function walk(rel, out) {
+    const abs = path.join(REPO, rel);
+    if (!fs.existsSync(abs)) return;
+    const st = fs.statSync(abs);
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(abs)) walk(`${rel}/${name}`, out);
+    } else if (rel.endsWith('.js')) {
+      out.push(rel);
+    }
+  }
+  const files = [];
+  for (const root of ['src', 'scripts/ci']) walk(root, files);
+  const leaks = [];
+  for (const rel of files) {
+    const content = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    if (content.includes('governance_execution_attempts') && !WRITING_PATH.has(rel)) {
+      leaks.push(rel);
+    }
+  }
+  assert.deepEqual(leaks, [],
+    'GM-27 canary: governance_execution_attempts referenced outside the writing path — '
+    + 'a future consumer may be leaking through. Files with leaks: ' + leaks.join(', '));
+});
+
+test('I24. File-scoped forbidden-vocabulary scan: execution-attempt-ledger actor must not contain operational words.', () => {
+  // Per OQ-27.14: the attempt-ledger actor file must not contain
+  // outcome-implying vocabulary. The list is STRICTER than the
+  // GM-26 claim-ledger scan: adds `committed` (DB commit lives
+  // in the transaction layer, never in the actor file).
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const filePath = path.join(REPO, 'src/actors/execution-attempt-ledger-actor.js');
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const FORBIDDEN = [
+    'completed', 'succeeded', 'failed', 'delivered',
+    'finalized', 'executed', 'dispatched', 'committed',
+  ];
+  const hits = FORBIDDEN.filter((w) => new RegExp('\\b' + w + '\\b').test(code));
+  assert.deepEqual(hits, [],
+    `I24: execution-attempt-ledger actor contains forbidden operational vocabulary: ${hits.join(', ')}. `
+    + 'ATTEMPT IS NOT OUTCOME. An attempt records ONLY the beginning of an attempt.');
+});
+
+test('I27. Doc-presence canary: execution-attempt-runtime-boundary.md must contain both required sections.', () => {
+  // Per OQ-27.16: the phantom-attempt problem is genuinely
+  // irresolvable at GM-27. The only mechanical defense is
+  // ensuring the next-outcome GM sees the warning.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const docPath = path.join(REPO, 'docs/governance/execution-attempt-runtime-boundary.md');
+  assert.ok(fs.existsSync(docPath),
+    'I27: docs/governance/execution-attempt-runtime-boundary.md must exist');
+  const doc = fs.readFileSync(docPath, 'utf8');
+  assert.match(doc, /^## What this is NOT$/m,
+    'I27: doc must contain a "## What this is NOT" section (defends against operational drift)');
+  assert.match(doc, /^## What remains unresolved$/m,
+    'I27: doc must contain a "## What remains unresolved" section (flags the phantom-attempt problem '
+    + 'for the future-outcome GM)');
 });

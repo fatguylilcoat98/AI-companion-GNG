@@ -368,6 +368,59 @@ See `execution-claim-runtime-boundary.md` for the substrate
 contract and `actor-runtime-boundary.md` §4d for the actor's
 verification chain.
 
+## 6f. First execution-attempt persistence lands (GM-27)
+
+GM-27 introduces `src/actors/execution-attempt-ledger-actor.js`
+and extends `src/review/` with three read+write operations
+(`recordExecutionAttempt`, `listExecutionAttempts`,
+`inspectExecutionAttempt`). The substrate
+(`governance_execution_attempts`) and the actor together prove
+the next invariant:
+
+> ATTEMPT IS NOT OUTCOME.
+
+This is the FIRST artifact in the chain that names "execution"
+as a thing that could happen — and deliberately stops short of
+saying whether anything actually did happen. An attempt row
+records ONLY the beginning of an attempt.
+
+The future-outcome GM will need a substrate that records
+success / failure / completion semantics. GM-27 deliberately
+does not pre-decide eight unresolved questions enumerated in
+`docs/governance/execution-attempt-runtime-boundary.md` "What
+remains unresolved" (phantom attempts, time windows,
+pre-outcome-GM rows, missing-outcome semantics, retry semantics,
+verification semantics, truth claims, reconciliation). The I27
+doc-presence canary asserts that section remains in the doc so
+the warning cannot be silently removed.
+
+GM-27 widens this module minimally: exactly one new intent type
+(`INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT`), exactly one new
+reason (`REASONS.EXECUTION_ATTEMPT_RECORDING_PERMITTED`),
+exactly one new POLICY_REFS entry. `EVENT_TYPES` remains
+unchanged (per OQ-27.7 — the attempts table IS the artifact).
+Snapshot tests C2/C3/C4 catch the widening at +1 each (REASONS
+15 values; INTENT_TYPES 12 values; OUTCOMES 8 values).
+
+**Constitutional rule** (now at five levels):
+> *Approval is not authorization; authorization is not execution;
+> an authorization row is NOT an execution signal; a claim row
+> is NOT execution — it only records single-consumption;
+> **an attempt row is NOT an outcome — it only records the
+> beginning of an attempt.***
+
+Three adversarial canaries protect GM-27's invariants:
+- **I23**: static scan asserting zero references to
+  `governance_execution_attempts` outside the writing path.
+- **I24**: file-scoped forbidden-vocabulary scan (one word
+  stricter than GM-26's H28 — adds `committed`).
+- **I27**: doc-presence canary asserting "What this is NOT" and
+  "What remains unresolved" sections persist.
+
+See `execution-attempt-runtime-boundary.md` for the substrate
+contract and `actor-runtime-boundary.md` §4e for the actor's
+verification chain.
+
 ## 6a. First actor lands (GM-22)
 
 GM-22 introduces `src/actors/` — the first code outside
