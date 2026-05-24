@@ -89,6 +89,16 @@ const POLICY_REFS = Object.freeze({
 // which the classifier calls.
 const _TOKEN = Symbol('Decision._INTERNAL_CONSTRUCTION_TOKEN');
 
+// Module-private WeakSet of every Decision the classifier has
+// produced. The actor's verification step consults this set to
+// confirm an `instanceof Decision` candidate was actually created
+// by `_createDecision` — and not by an attacker who set the
+// prototype of a hand-built object to `Decision.prototype`.
+//
+// The WeakSet is private to this module: external code cannot add
+// to it, and `isValidDecision` is the only way to query it.
+const _BLESSED = new WeakSet();
+
 class Decision {
   constructor(token, fields) {
     if (token !== _TOKEN) {
@@ -121,11 +131,26 @@ class Decision {
   }
 }
 
+// Closes the prototype-tampering gap: an attacker can construct
+// `{intentType, decision, reason, policyRef}` and call
+// `Object.setPrototypeOf(fake, Decision.prototype)` to make the
+// resulting object pass `instanceof Decision`. The WeakSet check
+// returns false for any object that did not go through
+// `_createDecision` below, because only that path adds to the set.
+function isValidDecision(value) {
+  return value instanceof Decision && _BLESSED.has(value);
+}
+
 // Internal factory the classifier calls. Not re-exported through
 // src/governance/index.js; callers cannot construct decisions
-// themselves.
+// themselves. Every Decision produced here is registered in the
+// _BLESSED WeakSet so the actor's `isValidDecision` check can
+// distinguish classifier-produced instances from prototype-tampered
+// imposters.
 function _createDecision(fields) {
-  return new Decision(_TOKEN, fields);
+  const d = new Decision(_TOKEN, fields);
+  _BLESSED.add(d);
+  return d;
 }
 
 module.exports = {
@@ -135,5 +160,6 @@ module.exports = {
   REASONS,
   ALL_REASONS,
   POLICY_REFS,
+  isValidDecision,
   _createDecision,
 };

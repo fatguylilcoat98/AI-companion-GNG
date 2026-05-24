@@ -208,6 +208,27 @@ decisions must satisfy this contract:
 GM-21 ships the classifier, the Decision shape, and the contract
 above. Steps 1–5 are GM-22+ work.
 
+## 6a. First actor lands (GM-22)
+
+GM-22 introduces `src/actors/` — the first code outside
+`src/governance/` to consume a Decision and act on it. The first
+actor (response-delivery) wraps the GM-20 conversation runtime;
+it requires a classifier-produced Decision (verified via
+`instanceof Decision` + `isValidDecision` + frozen + intent-type
+match + structural revalidation) and refuses to call the runtime
+on any non-admissible outcome. See `actor-runtime-boundary.md`
+for the locked contract.
+
+GM-22 also extends this module with one minimum-scope addition:
+`isValidDecision(value)` — a WeakSet-membership check exported
+from `src/governance/index.js`. The internal `_BLESSED` WeakSet
+in `decisions.js` is populated by `_createDecision` and consulted
+by `isValidDecision`. This closes the prototype-tampering gap
+that pure `instanceof` cannot close (an attacker can call
+`Object.setPrototypeOf(fake, Decision.prototype)`; the WeakSet
+check rejects the result because it was never added by the
+classifier's path).
+
 ## 7. Boundary guard
 
 `scripts/ci/check-governance-boundary.js` scans `src/governance/`

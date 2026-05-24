@@ -22,9 +22,10 @@ exception (see "The ajv exception" below).
 | Companion boundary guard | `check-companion-boundary.js` | In `src/companion/` (GM-19): zero SQL keywords (including read keywords like `SELECT`/`FROM`/`JOIN`/`WHERE` — the consumer never has raw SQL); the identifier `insertPrivateMemory` is forbidden; `pg`, model-SDK, and HTTP/server framework (`http`/`https`/`express`/`fastify`/`koa`/`@hapi/hapi`) imports are forbidden; memory-module imports are restricted to the public entry (`../memory` or `../memory/index`) — internal module paths are rejected. See `companion-runtime-boundary.md`. |
 | Conversation boundary guard | `check-conversation-boundary.js` | In `src/conversation/` (GM-20): zero SQL keywords; the identifier `insertPrivateMemory` is forbidden; `pg`, HTTP/server framework, `child_process`, `worker_threads`, `cluster`, and scheduling (`setInterval`/`setImmediate`/`cron`/`schedule`) imports are forbidden; `fs` write API surface (`writeFile`/`appendFile`/`createWriteStream`/`mkdir`/`rm`/`unlink`) is forbidden; the only approved model SDK is `@anthropic-ai/sdk` (every other model SDK is rejected); memory access must go through `../companion` (public entry only) — direct `../memory` imports and `../companion/<deeper>` paths are rejected; streaming identifiers (`.stream(`, `messages.stream`, `stream: true`) and tool-calling identifiers (`tools`/`tool_choice`/`tool_use`/`tool_result`) are forbidden. See `conversation-runtime-boundary.md`. |
 | Governance boundary guard | `check-governance-boundary.js` | In `src/governance/` (GM-21): zero SQL keywords; the identifier `insertPrivateMemory` is forbidden; `pg`, every model SDK (including `@anthropic-ai/sdk` — the governance module is pure-function and calls no model), HTTP/server framework, `child_process`, `worker_threads`, `cluster`, and scheduling (including `setTimeout`) imports / identifiers are forbidden; `fs` write API surface is forbidden; streaming + tool-calling identifiers are forbidden; the module is a LEAF — any import from another `src/` layer (`../memory`/`../companion`/`../conversation`/`../runtime`/`../db`/`../setup`) is rejected. See `governance-runtime-boundary.md`. |
+| Actors boundary guard | `check-actors-boundary.js` | In `src/actors/` (GM-22): zero SQL keywords; the identifier `insertPrivateMemory` is forbidden; `pg`, every model SDK (including `@anthropic-ai/sdk` — the conversation runtime owns that boundary), HTTP/server framework, `child_process`, `worker_threads`, `cluster`, and scheduling (`setInterval`/`setImmediate`/`cron`/`schedule` — `setTimeout` permitted because the conversation runtime uses it transitively) imports / identifiers are forbidden; `fs` write API surface is forbidden; streaming + tool-calling identifiers are forbidden; cross-layer imports of `../runtime`/`../db`/`../setup`/`../memory`/`../companion` are rejected; imports of `../governance` and `../conversation` are restricted to the public entries (no `../governance/<deeper>` or `../conversation/<deeper>` paths). See `actor-runtime-boundary.md`. |
 | RLS / privacy contract | `tests/rls-contract/run-contract.js` + `tests/rls-contract/run-real.test.js` | RLS / privacy contract, two suites run serially in the same CI job: (1) **synthetic** — applies a generic schema, the candidate policies, and two-pilot fixtures to a throwaway Postgres; (2) **real-schema** (GM-15) — applies `db/migrations/0*.sql` (including `007_rls_policies.sql`) and the same fixtures, then runs the matrix against the real schema. Both suites assert the visibility / write matrix (cross-pilot isolation, memory-store rules per visibility level, vault-session row-state model, admin denial on private memories, default-deny). See `rls-privacy-contract.md`. |
 
-All twelve previous guards plus the RLS / privacy contract are
+All thirteen previous guards plus the RLS / privacy contract are
 **enforced** — a violation fails the build.
 
 ## Runtime tests
@@ -36,9 +37,13 @@ All twelve previous guards plus the RLS / privacy contract are
   (`tests/companion/*.test.js`, GM-19), the conversation runtime
   under `src/conversation/` (`tests/conversation/*.test.js`, GM-20
   — the conversation runtime unit suite injects a mocked Anthropic
-  SDK client), and the governance classifier under `src/governance/`
-  (`tests/governance/*.test.js`, GM-21 — pure-function unit tests,
-  no I/O). It installs dependencies with `npm ci`.
+  SDK client), the governance classifier under `src/governance/`
+  (`tests/governance/*.test.js`, GM-21 — pure-function unit tests
+  plus the GM-22 adversarial negative-test suite,
+  `tests/governance/adversarial.test.js`), and the response-delivery
+  actor under `src/actors/` (`tests/actors/*.test.js`, GM-22 —
+  the actor unit suite injects a mocked conversation runtime).
+  It installs dependencies with `npm ci`.
 - The **`integration-tests`** job boots the runtime against a
   throwaway **Postgres 16 service container** and asserts the runtime
   state and health output for each seed scenario, plus the GM-16
@@ -94,6 +99,7 @@ node scripts/ci/check-memory-boundary.js
 node scripts/ci/check-companion-boundary.js
 node scripts/ci/check-conversation-boundary.js
 node scripts/ci/check-governance-boundary.js
+node scripts/ci/check-actors-boundary.js
 npm ci && node scripts/ci/check-config-schema.js
 ```
 

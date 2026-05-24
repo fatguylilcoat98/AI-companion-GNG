@@ -145,6 +145,16 @@ jobs:
           node-version: '20'
       - run: node scripts/ci/check-governance-boundary.js
 
+  actors-boundary-guard:
+    name: Actors boundary guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/ci/check-actors-boundary.js
+
   unit-tests:
     name: Runtime unit tests
     runs-on: ubuntu-latest
@@ -155,7 +165,7 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm ci
-      - run: node --test tests/runtime/*.test.js tests/memory/*.test.js tests/companion/*.test.js tests/conversation/*.test.js tests/governance/*.test.js
+      - run: node --test tests/runtime/*.test.js tests/memory/*.test.js tests/companion/*.test.js tests/conversation/*.test.js tests/governance/*.test.js tests/actors/*.test.js
 
   integration-tests:
     name: Runtime integration tests

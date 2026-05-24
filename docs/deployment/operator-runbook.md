@@ -229,20 +229,23 @@ connection strings** (GM-16). The connecting LOGIN role's effective
 identity determines what RLS lets the process see and write — see
 `../governance/rls-privacy-contract.md`.
 
-#### Memory + companion + conversation + governance are all library-only today (GM-17 / GM-18 / GM-19 / GM-20 / GM-21)
+#### Memory + companion + conversation + governance + actors are all library-only today (GM-17 / GM-18 / GM-19 / GM-20 / GM-21 / GM-22)
 
 The memory-governance module (`src/memory/`, GM-17, hardened in
 GM-18), the read-only companion consumer (`src/companion/`,
 GM-19), the first mounted conversation runtime
-(`src/conversation/`, GM-20), and the execution-decision
-classifier (`src/governance/`, GM-21) are all **libraries**. No
-process in this release consumes them — the runtime boot path
-(`src/runtime/boot.js`) does not import any of them, the
-provisioning script does not import any of them, and no HTTP
-endpoint exists. Companion behavior, transcript persistence, any
-user-facing conversational surface, and any actor module that
-acts on classifier Decisions all remain explicitly deferred to a
-future GM behind a separate decision gate.
+(`src/conversation/`, GM-20), the execution-decision classifier
+(`src/governance/`, GM-21), and the first Decision-gated actor
+(`src/actors/`, GM-22 — the response-delivery actor) are all
+**libraries**. No process in this release consumes them — the
+runtime boot path (`src/runtime/boot.js`) does not import any of
+them, the provisioning script does not import any of them, and no
+HTTP endpoint exists. Companion behavior, transcript persistence,
+any user-facing conversational surface, additional actor modules,
+and any mounting of the actor / classifier / conversation runtime
+into a production process all remain explicitly deferred behind
+their own decision gates. The system is **internal-build only**
+until the council's full gauntlet completes.
 
 `LYLO_APP_DATABASE_URL` and the `lylo_app_login` LOGIN role are
 provisioned now so the contract is in place ahead of future GMs
