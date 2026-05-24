@@ -920,3 +920,140 @@ test('governance_execution_claims INSERT: replay (duplicate claim for same autho
     );
   });
 });
+
+// ---------------------------------------------------------------------
+// governance_execution_attempts (GM-27): admin-only SELECT;
+// no proposer / reviewer / authorizer / claimant / attempter-
+// as-non-admin / family / caregiver visibility. INSERT requires
+// admin role + tenant + no impersonation. UNIQUE(execution_claim_id)
+// forbids retry / multi-attempt semantics.
+// Constitutional rule: ATTEMPT IS NOT OUTCOME.
+// ---------------------------------------------------------------------
+
+const ADMIN4_A = 'aaaaaaaa-7777-1111-1111-aaaaaaaaaaaa';
+const ADMIN4_B = 'bbbbbbbb-7777-2222-2222-bbbbbbbbbbbb';
+const ATTEMPT_A = 'aaaaaaaa-aaaa-1111-1111-c00000000001';
+const ATTEMPT_B = 'bbbbbbbb-aaaa-2222-2222-d00000000001';
+const CLAIM_A_FOR_ATTEMPT = 'aaaaaaaa-bbbb-1111-1111-a00000000001';
+
+test('governance_execution_attempts: admin in pilot sees the recorded attempt', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_attempts', 'id');
+    assert.ok(ids.includes(ATTEMPT_A), 'admin must see attempts in pilot');
+    assert.equal(ids.includes(ATTEMPT_B), false, 'admin must NOT see pilot-B attempts');
+  });
+});
+
+test('governance_execution_attempts: senior-A (proposer) sees nothing', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    assert.deepEqual(await visibleIds(client, 'governance_execution_attempts', 'id'), []);
+  });
+});
+
+test('governance_execution_attempts: family / caregiver see nothing', async () => {
+  const c = await setup();
+  for (const [user, role] of [[FAMILY_A, 'family'], [CAREGIVER_A, 'caregiver']]) {
+    await withContext(c, { role: 'lylo_app', pilot: PILOT_A, user, userRole: role }, async (client) => {
+      assert.deepEqual(await visibleIds(client, 'governance_execution_attempts', 'id'), []);
+    });
+  }
+});
+
+test('governance_execution_attempts: cross-pilot — pilot-B admin sees only pilot-B attempt', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_B, user: 'bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_attempts', 'id');
+    assert.deepEqual(ids.sort(), [ATTEMPT_B]);
+  });
+});
+
+test('governance_execution_attempts: lylo_runtime has no grant — SELECT permission denied', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_attempts'),
+      /permission denied/i
+    );
+  });
+});
+
+test('governance_execution_attempts INSERT: non-admin role rejected by WITH CHECK', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_attempts '
+          + '(pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_A, CLAIM_A_FOR_ATTEMPT, SENIOR_A]
+      ),
+      /row.level security|new row violates row.level/i
+    );
+  });
+});
+
+test('governance_execution_attempts INSERT: admin cannot impersonate another attempted_by_user_id', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN4_A, userRole: 'admin',
+  }, async (client) => {
+    // Impersonate ADMIN3_A as attempter while connected as ADMIN4_A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_attempts '
+          + '(pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_A, CLAIM_A_FOR_ATTEMPT, ADMIN3_A]
+      ),
+      /row.level security|new row violates row.level|duplicate key|unique/i
+    );
+  });
+});
+
+test('governance_execution_attempts INSERT: cross-pilot rejected (composite FK + RLS)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN4_A, userRole: 'admin',
+  }, async (client) => {
+    // Try to record an attempt against pilot-B's claim from pilot A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_attempts '
+          + '(pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_B, 'bbbbbbbb-bbbb-2222-2222-b00000000001', ADMIN4_A]
+      ),
+      /row.level security|new row violates row.level|foreign key/i
+    );
+  });
+});
+
+test('governance_execution_attempts INSERT: replay (duplicate attempt for same claim) rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN4_A, userRole: 'admin',
+  }, async (client) => {
+    // CLAIM_A_FOR_ATTEMPT already has ATTEMPT_A seeded; second attempt fails UNIQUE.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_attempts '
+          + '(pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_A, CLAIM_A_FOR_ATTEMPT, ADMIN4_A]
+      ),
+      /duplicate key|unique/i
+    );
+  });
+});

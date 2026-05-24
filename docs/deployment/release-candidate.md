@@ -111,7 +111,7 @@ Seventeen baseline CI jobs gate every PR:
   every model SDK including `@anthropic-ai/sdk` is forbidden;
   scheduling (including `setTimeout`) and all `fs` write API are
   forbidden; the classifier is sync, stateless, side-effect-free.
-- The **actors boundary guard** (GM-22 through GM-26) — scopes `src/actors/`;
+- The **actors boundary guard** (GM-22 through GM-27) — scopes `src/actors/`;
   zero SQL keywords; bans `pg`, every model SDK (incl. `@anthropic-ai/sdk`),
   HTTP/server frameworks, `child_process`/`worker_threads`/`cluster`,
   `setInterval`/`setImmediate`/`cron`/`schedule`, all `fs` write API,
@@ -119,19 +119,22 @@ Seventeen baseline CI jobs gate every PR:
   `../runtime`/`../db`/`../setup`/`../memory`/`../companion`; restricts
   `../governance`, `../conversation`, and `../review` imports to their
   public entries.
-- The **review boundary guard** (GM-23 through GM-26) — scopes
+- The **review boundary guard** (GM-23 through GM-27) — scopes
   `src/review/`; bans `UPDATE`/`DELETE`/`DROP`/`ALTER`/`TRUNCATE`/`GRANT`/`REVOKE`/`CREATE`
   (`INSERT` is permitted but tracked); FROM/JOIN allowlist limited
-  to the four governance-staging tables + `users` + `pilot_instances`;
-  INSERT INTO allowlist limited to the four governance-staging
+  to the **five** governance-staging tables + `users` + `pilot_instances`;
+  INSERT INTO allowlist limited to the five governance-staging
   tables; `pg` import scoped to `src/review/client.js`; every model
   SDK, HTTP framework, `child_process`/`worker_threads`/`cluster`,
   scheduling identifiers, `fs` write API, streaming + tool-calling
   identifiers, and the `insertPrivateMemory` identifier are
-  forbidden. GM-26 adds a **file-scoped** forbidden-vocabulary scan
-  on `src/actors/execution-claim-ledger-actor.js` — bans `executed`/
-  `completed`/`dispatched`/`delivered`/`finalized`/`succeeded`/`failed`
-  as bare identifiers in that one file (claim is NOT execution).
+  forbidden. **Two file-scoped forbidden-vocabulary scans**
+  (refactored into a shared helper per OQ-27.17): GM-26 bans
+  `executed`/`completed`/`dispatched`/`delivered`/`finalized`/
+  `succeeded`/`failed` in `src/actors/execution-claim-ledger-actor.js`
+  (claim is NOT execution); GM-27 bans the same seven words **plus
+  `committed`** in `src/actors/execution-attempt-ledger-actor.js`
+  (ATTEMPT IS NOT OUTCOME).
 - The **configuration contract** (`ajv` against
   `companion.schema.json`; positive no-leak fixtures).
 - Runtime + memory + companion + conversation + governance + actors
@@ -185,6 +188,7 @@ Seventeen baseline CI jobs gate every PR:
 | Review-decision substrate (GM-24) | Landed as a library extension (`src/review/repository.js` + `src/review/transaction.js`) + a third Decision-gated actor (`src/actors/review-decision-actor.js`); not mounted by boot. `db/migrations/009_review_decisions.sql` adds `governance_review_decisions` with `reviewer_role` CHECK-locked to `'admin'`, `review_outcome` CHECK in `('approved','rejected')`, `review_reason` CHECK in a 5-value vocabulary, `UNIQUE(review_queue_id)`, BEFORE-UPDATE-OR-DELETE append-only trigger, and BEFORE-INSERT self-review trigger. Three RLS policies: insert_admin (admin-only WITH CHECK + tenant + no impersonation), admin SELECT, proposer SELECT. `lylo_app` gets SELECT + INSERT only — no UPDATE/DELETE grants; `lylo_admin` gets SELECT; `lylo_runtime`/`lylo_setup` have no grants. `createReviewDecisionActor({reviewQueuePool, log?})` inherits the GM-22/23 verification chain and adds a seventh, actor-specific layer: `params.userRole === 'admin'`. New ctx ops: `listPendingReviewItems`, `inspectReviewItem`, `recordReviewDecision`. Classifier widened by exactly one intent (`governance.review.decide`), one reason (`review_decision_recording_permitted`), one POLICY_REF. `OUTCOMES` widens to five values (`recorded` added). EVENT_TYPES unchanged (the new table IS the artifact). Boundary guard extended for the new table; adversarial suite F-series (F1–F12) covers forged Decisions, prototype tampering, wrong intent, non-admin role, vocabulary drift, sentinel leakage, EVENT_TYPES lock. RLS contract suites extended in both synthetic and real-schema modes. New `tests/integration/review-decision.test.js` proves end-to-end. **Constitutional rule: recording a review outcome is NOT execution; approval is NOT authorization.** No production consumer of `governance_review_decisions`; future execution capability is a separately gated decision. | `governance/review-decision-runtime-boundary.md`, `db/migrations/009_review_decisions.sql`, `tests/integration/review-decision.test.js`, `tests/actors/review-decision-actor.test.js`, `tests/governance/adversarial.test.js` |
 | Execution-authorization substrate (GM-25) | Landed as a library extension (`src/review/repository.js` + `src/review/transaction.js`) + a fourth Decision-gated actor (`src/actors/execution-authorization-actor.js`); not mounted by boot. `db/migrations/010_execution_authorizations.sql` adds `governance_execution_authorizations` with `authorized_by_role` CHECK-locked to `'admin'`, `authorization_scope` CHECK in a 4-value vocabulary (`memory_candidate_admission` + 3 `future_*` forward-looking values), `authorization_reason` CHECK in 1-value vocabulary (`admin_explicit_authorization`), `UNIQUE(review_decision_id)` for replay prevention, BEFORE-UPDATE-OR-DELETE append-only trigger, and a **BEFORE-INSERT preconditions trigger** that walks the chain authorization → review_decision → review_queue and refuses if (a) the referenced review_decision doesn't exist, (b) review_outcome ≠ 'approved', (c) authorizer = reviewer (self-authorization forbidden), or (d) the authorization_scope doesn't match the underlying intent type. Two RLS policies: `auth_insert_admin` (admin-only WITH CHECK + tenant + no impersonation), `auth_admin_select` (admin-only SELECT — no proposer/reviewer/family/caregiver/runtime visibility). `lylo_app` gets SELECT + INSERT; `lylo_admin` gets SELECT; `lylo_runtime`/`lylo_setup` have no grants. `createExecutionAuthorizationActor({reviewQueuePool, log?})` inherits the GM-22/23/24 verification chain and adds two actor-specific layers (admin-only role + vocabulary locks). New ctx ops: `recordExecutionAuthorization`, `listExecutionAuthorizations`, `inspectExecutionAuthorization`. Classifier widened by exactly one intent (`governance.execution.authorize`), one reason (`execution_authorization_recording_permitted`), one POLICY_REF. `OUTCOMES` widens to six values (`authorized_recorded` added). EVENT_TYPES unchanged. Two new locked vocabularies: AUTHORIZATION_SCOPES (4 values) + AUTHORIZATION_REASONS (1 value). Adversarial G-series (G1–G13) covers forged Decisions, prototype tampering, wrong intent, non-admin role, vocabulary drift, sentinel leakage, EVENT_TYPES lock, AND **G13 = static-scan canary** that asserts zero references to the new table outside the documented writing path. RLS contract suites extended in both synthetic and real-schema modes (fixtures gained a second admin per pilot, per OQ-25.14). New `tests/integration/execution-authorization.test.js` proves end-to-end. **Constitutional rule: approval is NOT authorization; authorization is NOT execution; an authorization row is NOT an execution signal.** No production consumer; future execution capability is a separately gated decision with its own boundary guard, adversarial review, and explicit semantics for revocation/expiry/replay (none of which exist in GM-25). | `governance/execution-authorization-runtime-boundary.md`, `db/migrations/010_execution_authorizations.sql`, `tests/integration/execution-authorization.test.js`, `tests/actors/execution-authorization-actor.test.js`, `tests/governance/adversarial.test.js` |
 | Execution-claim substrate (GM-26) | Landed as a library extension (`src/review/repository.js` + `src/review/transaction.js`) + a fifth Decision-gated actor (`src/actors/execution-claim-ledger-actor.js` — "ledger" in the filename per OQ-26.13 makes the read-only nature visible); not mounted by boot. `db/migrations/011_execution_claims.sql` adds `governance_execution_claims` with `claimed_by_role` CHECK-locked to `'admin'`, `authorization_scope` mirroring GM-25's 4-value vocab, `execution_surface` CHECK in a NEW 4-value vocabulary with mandatory `future_*` prefix, `UNIQUE(execution_authorization_id)` as the **replay-prevention wall**, BEFORE-UPDATE-OR-DELETE append-only trigger, and a **BEFORE-INSERT preconditions trigger** that walks authorization → review_decision and refuses if (a) the authorization doesn't exist, (b) scope drift (claim's scope ≠ authorization's), (c) claimant = authorizer (self-claim forbidden), (d) execution_surface doesn't fit authorization_scope (1:1 mapping), or (e) underlying review_outcome ≠ 'approved'. Two RLS policies: `claim_insert_admin` (admin-only WITH CHECK + tenant + no impersonation), `claim_admin_select` (admin-only SELECT). `lylo_app` gets SELECT + INSERT; `lylo_admin` gets SELECT; `lylo_runtime`/`lylo_setup` have no grants. `createExecutionClaimLedgerActor({reviewQueuePool, log?})` inherits the GM-22/23/24/25 chain and adds dual vocabulary locks. New ctx ops: `recordExecutionClaim`, `listExecutionClaims`, `inspectExecutionClaim`. Classifier widened by exactly one intent (`governance.execution.claim`), one reason (`execution_claim_recording_permitted`), one POLICY_REF. `OUTCOMES` widens to seven values (`claim_recorded` added). EVENT_TYPES unchanged. One new locked vocabulary: EXECUTION_SURFACES (4 values, all `future_*` prefixed). Adversarial H-series (H1–H28) covers forged Decisions, prototype tampering, wrong intent, non-admin role, vocabulary drift, sentinel leakage, EVENT_TYPES lock, **H22 = static-scan canary** (zero references outside writing path), **H27 = `future_*` prefix discipline snapshot**, **H28 = file-scoped forbidden-vocabulary scan on the ledger actor file** (enforcing the OQ-26.14 boundary-guard extension). RLS contract suites extended in both synthetic and real-schema modes (fixtures gained a third admin per pilot, per OQ-26.15). New `tests/integration/execution-claim.test.js` proves end-to-end. **Constitutional rule: claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success — claim ONLY means "this authorization has now been consumed exactly once."** No production consumer; future execution capability is a separately gated decision with explicit semantics for revocation/expiry/partial-consumption/rollback (none of which exist in GM-26). | `governance/execution-claim-runtime-boundary.md`, `db/migrations/011_execution_claims.sql`, `tests/integration/execution-claim.test.js`, `tests/actors/execution-claim-ledger-actor.test.js`, `tests/governance/adversarial.test.js` |
+| Execution-attempt substrate (GM-27) | Landed as a library extension (`src/review/repository.js` + `src/review/transaction.js`) + a sixth Decision-gated actor (`src/actors/execution-attempt-ledger-actor.js` — "ledger" in the filename per OQ-27.13 is MANDATORY); not mounted by boot. `db/migrations/012_execution_attempts.sql` adds `governance_execution_attempts` with `attempted_by_role` CHECK-locked to `'admin'`, `authorization_scope` inheriting GM-25's vocab, `execution_surface` inheriting GM-26's vocab (all `future_*`), `UNIQUE(execution_claim_id)` forbidding retry / multi-attempt, BEFORE-UPDATE-OR-DELETE append-only trigger, and a **BEFORE-INSERT preconditions trigger** that walks the 5-deep chain attempt → claim → authorization → review_decision and refuses on missing claim / scope drift from claim / surface drift from claim / self-attempt (attempter = claimant) / chain rot (review no longer approved). Two RLS policies. Grants: SELECT+INSERT to `lylo_app`, SELECT to `lylo_admin`. `createExecutionAttemptLedgerActor({reviewQueuePool, log?})` inherits the GM-22/23/24/25/26 chain. New ctx ops: `recordExecutionAttempt`, `listExecutionAttempts`, `inspectExecutionAttempt`. Classifier widened by exactly one intent (`governance.execution.attempt`), one reason (`execution_attempt_recording_permitted`), one POLICY_REF. `OUTCOMES` widens to eight values (`attempt_recorded` added). EVENT_TYPES unchanged. **NO new locked vocabularies** (inherits AUTHORIZATION_SCOPES + EXECUTION_SURFACES). Adversarial I-series (I1–I27) covers forged Decisions, prototype tampering, wrong intent, non-admin role, vocabulary drift, sentinel leakage, EVENT_TYPES lock, **I23 = static-scan canary** (zero references outside writing path), **I24 = file-scoped forbidden-vocabulary scan on the ledger actor file** (STRICTER than H28 — adds `committed`), **I27 = doc-presence canary** asserting both required sections remain in the boundary doc. Boundary guard's file-scoped scan logic refactored into shared `runFileScopedForbiddenScan` helper (per OQ-27.17). RLS contract suites extended (fixtures gained admin4-A/admin4-B per OQ-27.15). New `tests/integration/execution-attempt.test.js` proves end-to-end. **Constitutional rule: ATTEMPT IS NOT OUTCOME.** An attempt row records ONLY the beginning of an attempt — never success, failure, completion, interruption, delivery, dispatch, finalization, or commit state. No production consumer; the future-outcome GM must explicitly answer the eight unresolved questions enumerated in `docs/governance/execution-attempt-runtime-boundary.md` "What remains unresolved" (phantom attempts, time windows, pre-outcome-GM rows, missing-outcome semantics, retry semantics, verification semantics, truth claims, reconciliation). | `governance/execution-attempt-runtime-boundary.md`, `db/migrations/012_execution_attempts.sql`, `tests/integration/execution-attempt.test.js`, `tests/actors/execution-attempt-ledger-actor.test.js`, `tests/governance/adversarial.test.js` |
 
 ## What is explicitly deferred
 
@@ -304,12 +308,41 @@ claim is NOT dispatch; claim is NOT completion; claim is NOT
 success — claim ONLY means "this authorization has now been
 consumed exactly once."** No readiness claim.
 
+GM-27 adds the **execution-attempt substrate**: the FIRST
+artifact in the chain that names "execution" as a thing that
+could happen — and deliberately stops short of saying whether
+anything actually happened. `UNIQUE(execution_claim_id)` forbids
+retry / multi-attempt semantics. Library-only; no production
+consumer; admin-only INSERT/SELECT; BEFORE-INSERT preconditions
+trigger walks the 5-deep chain attempt → claim → authorization
+→ review_decision and refuses self-attempt, scope drift, surface
+drift, or chain rot. No new locked vocabulary (inherits GM-25's
+AUTHORIZATION_SCOPES and GM-26's EXECUTION_SURFACES). One new
+actor outcome (`attempt_recorded`). The substrate now
+mechanically preserves a **six-stage** governance chain —
+propose → review → authorize → claim → attempt → (future) outcome.
+
+**ATTEMPT IS NOT OUTCOME.** This is the strictest constitutional
+rule in the chain so far. Three adversarial canaries refuse any
+future GM that conflates the two: **I23** (static-scan canary on
+the table), **I24** (file-scoped forbidden-vocabulary scan on
+the ledger actor — STRICTER than GM-26's H28: adds `committed`),
+and **I27** (doc-presence canary asserting both "What this is
+NOT" and "What remains unresolved" sections remain in the
+boundary doc). The actor filename — `execution-attempt-ledger-actor.js`
+— mandates "ledger" per OQ-27.13 to make the read-only /
+record-only nature visible at the filename level. No readiness
+claim.
+
 The next dangerous step is **any consumer of
-`governance_execution_claims`** — i.e., the first real execution
-capability. That is its own decision gate, its own boundary
-guard, its own adversarial review, with its own semantics for
-revocation, expiry, partial-consumption, and rollback (none of
-which exist in GM-26). H22 + H28 catch accidental introduction.
+`governance_execution_attempts`**, OR any GM that introduces
+outcome semantics. The latter MUST explicitly answer the eight
+unresolved questions enumerated in
+`docs/governance/execution-attempt-runtime-boundary.md` "What
+remains unresolved": phantom attempts, time windows, pre-outcome-GM
+rows, missing-outcome semantics, retry semantics, verification
+semantics, truth claims, reconciliation. A silent answer to any
+of them is the failure mode I27 exists to prevent.
 
 ## Cross-references
 

@@ -95,6 +95,22 @@ const INTENT_TYPES = Object.freeze({
   // is NOT dispatch; claim only means "this authorization has now
   // been consumed exactly once."
   GOVERNANCE_EXECUTION_CLAIM: 'governance.execution.claim',
+
+  // GM-27: recording that an admin (different from the claimant)
+  // BEGAN an execution attempt against a claim. The first artifact
+  // in the chain that names "execution" as a thing that could
+  // happen — and deliberately stops short of saying whether
+  // anything actually did happen. Classifier returns `admissible`
+  // — role enforcement (admin only), data preconditions
+  // (referenced claim exists, scope equality, surface equality,
+  // attempter ≠ claimant, upstream chain still resolves to
+  // approved review), and the recording itself live at the
+  // execution-attempt-ledger actor + DB BEFORE-INSERT trigger.
+  // Constitutional rule: ATTEMPT IS NOT OUTCOME. An attempt row
+  // records only the beginning of an attempt — never success,
+  // failure, completion, interruption, delivery, dispatch,
+  // finalization, or commit state.
+  GOVERNANCE_EXECUTION_ATTEMPT: 'governance.execution.attempt',
 });
 
 const ALL_INTENT_TYPES = new Set(Object.values(INTENT_TYPES));

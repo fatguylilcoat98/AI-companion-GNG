@@ -53,6 +53,19 @@
  *               success — it ONLY means "this authorization has
  *               now been consumed exactly once." No production
  *               code consumes claim rows in GM-26.
+ *   ATTEMPT_RECORDED — GM-27: an admin (different from the
+ *               claimant) began an execution attempt against a
+ *               claim. The first artifact in the chain that
+ *               names "execution" — and deliberately stops short
+ *               of saying whether anything actually happened.
+ *               The execution-attempt-ledger actor returns this
+ *               outcome on the happy path. Constitutional rule
+ *               (the strictest one yet): ATTEMPT IS NOT OUTCOME.
+ *               An attempt row records ONLY the beginning of an
+ *               attempt — never success, failure, completion,
+ *               interruption, delivery, dispatch, finalization,
+ *               or commit state. No production code consumes
+ *               attempt rows in GM-27.
  */
 
 const OUTCOMES = Object.freeze({
@@ -63,6 +76,7 @@ const OUTCOMES = Object.freeze({
   RECORDED:            'recorded',
   AUTHORIZED_RECORDED: 'authorized_recorded',
   CLAIM_RECORDED:      'claim_recorded',
+  ATTEMPT_RECORDED:    'attempt_recorded',
 });
 
 module.exports = { OUTCOMES };

@@ -23,7 +23,12 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   -- with claimant != authorizer (admin2-A authorizes; admin3-A
   -- claims). Adjacent-only separation-of-duties chain extends
   -- one more stage.
-  ('aaaaaaaa-6666-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin3-A',     'admin');
+  ('aaaaaaaa-6666-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin3-A',     'admin'),
+  -- GM-27: fourth admin per pilot so attempt rows can be seeded
+  -- with attempter != claimant (admin3-A claims; admin4-A
+  -- attempts). Adjacent-only separation-of-duties chain extends
+  -- one more stage.
+  ('aaaaaaaa-7777-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin4-A',     'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('11111111-1111-1111-1111-111111111111', 'Aria', '{"tone":"warm"}'::jsonb);
@@ -129,7 +134,10 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   ('bbbbbbbb-5555-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin2-B', 'admin'),
   -- GM-26: third admin per pilot (see comment in Pilot A users
   -- block above).
-  ('bbbbbbbb-6666-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin3-B', 'admin');
+  ('bbbbbbbb-6666-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin3-B', 'admin'),
+  -- GM-27: fourth admin per pilot (see comment in Pilot A users
+  -- block above).
+  ('bbbbbbbb-7777-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin4-B', 'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('22222222-2222-2222-2222-222222222222', 'Bram', '{"tone":"steady"}'::jsonb);
@@ -318,4 +326,26 @@ INSERT INTO governance_execution_claims
    'memory_candidate_admission',
    'future_memory_admission_consumer',
    'bbbbbbbb-6666-2222-2222-bbbbbbbbbbbb',
+   'admin');
+
+-- GM-27: attempt rows. attempter (admin4) != claimant (admin3).
+-- authorization_scope and execution_surface MUST equal the
+-- claim's values (DB trigger asserts equality).
+INSERT INTO governance_execution_attempts
+  (id, pilot_instance_id, execution_claim_id,
+   authorization_scope, execution_surface,
+   attempted_by_user_id, attempted_by_role) VALUES
+  ('aaaaaaaa-aaaa-1111-1111-c00000000001',
+   '11111111-1111-1111-1111-111111111111',
+   'aaaaaaaa-bbbb-1111-1111-a00000000001',
+   'memory_candidate_admission',
+   'future_memory_admission_consumer',
+   'aaaaaaaa-7777-1111-1111-aaaaaaaaaaaa',
+   'admin'),
+  ('bbbbbbbb-aaaa-2222-2222-d00000000001',
+   '22222222-2222-2222-2222-222222222222',
+   'bbbbbbbb-bbbb-2222-2222-b00000000001',
+   'memory_candidate_admission',
+   'future_memory_admission_consumer',
+   'bbbbbbbb-7777-2222-2222-bbbbbbbbbbbb',
    'admin');

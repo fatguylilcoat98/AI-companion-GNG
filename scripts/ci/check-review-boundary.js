@@ -57,6 +57,7 @@ const SELECT_ALLOWED_TABLES = new Set([
   'governance_review_decisions',
   'governance_execution_authorizations',
   'governance_execution_claims',
+  'governance_execution_attempts',
   'users',
   'pilot_instances',
 ]);
@@ -66,6 +67,7 @@ const INSERT_ALLOWED_TABLES = new Set([
   'governance_review_decisions',
   'governance_execution_authorizations',
   'governance_execution_claims',
+  'governance_execution_attempts',
 ]);
 
 // All write/DDL keywords except INSERT (which is permitted but
@@ -195,40 +197,73 @@ for (const rel of files) {
 }
 
 // ---------------------------------------------------------------------
-// File-scoped scan (GM-26 OQ-26.14): the execution-claim ledger actor
-// file must not contain operational vocabulary. "Claim is NOT
-// execution; claim is NOT dispatch; claim is NOT completion; claim
-// is NOT success." Mechanically forbidding these identifiers
-// inside that one file prevents the actor from silently acquiring
-// operational meaning.
+// File-scoped forbidden-vocabulary scans (GM-26 OQ-26.14 +
+// GM-27 OQ-27.14 / OQ-27.17). Specific ledger-actor files are
+// mechanically forbidden from containing operational vocabulary.
 //
-// The scan is file-scoped because these identifiers appear
+// Each scan is file-scoped because these identifiers appear
 // legitimately elsewhere (e.g. response-delivery-actor's
-// 'executed' outcome, the OUTCOMES doc comment). Adding them to
-// the module-wide FORBIDDEN_IDENTIFIERS would false-positive.
+// 'executed' outcome, the OUTCOMES doc comment, repository-layer
+// SQL strings). Adding them to the module-wide
+// FORBIDDEN_IDENTIFIERS would false-positive.
+//
+// Shared helper (per OQ-27.17): runFileScopedForbiddenScan applies
+// a forbidden-identifier list to one specific file. Used for the
+// GM-26 execution-claim ledger and the GM-27 execution-attempt
+// ledger; future ledger actors can register their own scan by
+// adding to FILE_SCOPED_SCANS below.
 // ---------------------------------------------------------------------
 
-const CLAIM_LEDGER_FILE = 'src/actors/execution-claim-ledger-actor.js';
-const CLAIM_LEDGER_FORBIDDEN = [
-  { re: /\bexecuted\b/, label: 'executed (claim is NOT execution)' },
-  { re: /\bcompleted\b/, label: 'completed (claim is NOT completion)' },
-  { re: /\bdispatched\b/, label: 'dispatched (claim is NOT dispatch)' },
-  { re: /\bdelivered\b/, label: 'delivered (claim is NOT delivery)' },
-  { re: /\bfinalized\b/, label: 'finalized (claim is NOT finalization)' },
-  { re: /\bsucceeded\b/, label: 'succeeded (claim is NOT success)' },
-  { re: /\bfailed\b/, label: 'failed (claim records single-consumption, not outcome)' },
-];
-
-if (fs.existsSync(path.join(REPO, CLAIM_LEDGER_FILE))) {
-  const raw = fs.readFileSync(path.join(REPO, CLAIM_LEDGER_FILE), 'utf8');
+function runFileScopedForbiddenScan(relPath, forbidden, errorsOut) {
+  const abs = path.join(REPO, relPath);
+  if (!fs.existsSync(abs)) return;
+  const raw = fs.readFileSync(abs, 'utf8');
   const code = stripComments(raw);
-  for (const { re, label } of CLAIM_LEDGER_FORBIDDEN) {
+  for (const { re, label } of forbidden) {
     if (re.test(code)) {
-      errors.push(
-        `${CLAIM_LEDGER_FILE}: forbidden operational identifier — ${label}`
-      );
+      errorsOut.push(`${relPath}: forbidden operational identifier — ${label}`);
     }
   }
+}
+
+const FILE_SCOPED_SCANS = [
+  // GM-26: execution-claim ledger actor. "Claim is NOT execution;
+  // claim is NOT dispatch; claim is NOT completion; claim is NOT
+  // success." Per OQ-26.14.
+  {
+    file: 'src/actors/execution-claim-ledger-actor.js',
+    forbidden: [
+      { re: /\bexecuted\b/, label: 'executed (claim is NOT execution)' },
+      { re: /\bcompleted\b/, label: 'completed (claim is NOT completion)' },
+      { re: /\bdispatched\b/, label: 'dispatched (claim is NOT dispatch)' },
+      { re: /\bdelivered\b/, label: 'delivered (claim is NOT delivery)' },
+      { re: /\bfinalized\b/, label: 'finalized (claim is NOT finalization)' },
+      { re: /\bsucceeded\b/, label: 'succeeded (claim is NOT success)' },
+      { re: /\bfailed\b/, label: 'failed (claim records single-consumption, not outcome)' },
+    ],
+  },
+  // GM-27: execution-attempt ledger actor. "ATTEMPT IS NOT
+  // OUTCOME." Per OQ-27.14. Same word list as the claim ledger
+  // PLUS `committed` (which reads as outcome semantics most
+  // strongly at this layer; the database-level commit lives in
+  // the transaction layer, never in the actor file).
+  {
+    file: 'src/actors/execution-attempt-ledger-actor.js',
+    forbidden: [
+      { re: /\bexecuted\b/, label: 'executed (ATTEMPT IS NOT OUTCOME)' },
+      { re: /\bcompleted\b/, label: 'completed (attempt is NOT completion)' },
+      { re: /\bdispatched\b/, label: 'dispatched (attempt is NOT dispatch)' },
+      { re: /\bdelivered\b/, label: 'delivered (attempt is NOT delivery)' },
+      { re: /\bfinalized\b/, label: 'finalized (attempt is NOT finalization)' },
+      { re: /\bsucceeded\b/, label: 'succeeded (attempt is NOT success)' },
+      { re: /\bfailed\b/, label: 'failed (attempt records beginning, not outcome)' },
+      { re: /\bcommitted\b/, label: 'committed (DB commit lives in the transaction layer, NOT in this actor)' },
+    ],
+  },
+];
+
+for (const { file, forbidden } of FILE_SCOPED_SCANS) {
+  runFileScopedForbiddenScan(file, forbidden, errors);
 }
 
 console.log('Baseline CI — review-queue boundary');

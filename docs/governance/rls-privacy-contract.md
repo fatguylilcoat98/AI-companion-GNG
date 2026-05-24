@@ -60,10 +60,10 @@ per process — `LYLO_RUNTIME_DATABASE_URL`, `LYLO_SETUP_DATABASE_URL`).
 
 | Role | Purpose | Table grants |
 |---|---|---|
-| `lylo_runtime` | Runtime configuration loader (GM-7b) | SELECT on `pilot_instances`, `companion_profile`, `supported_person_profile`, `setup_state`. **No grant on any of the four governance-staging tables** (`governance_review_queue`, `governance_review_decisions`, `governance_execution_authorizations`, `governance_execution_claims`). |
-| `lylo_app` | Memory-governance runtime + review-queue + review-decision + execution-authorization + execution-claim-ledger actors | SELECT on all client-scoped tables; INSERT on `memory_store`, `governance_audit_log`, `memory_vault_sessions`, `governance_review_queue` (GM-23), `governance_review_decisions` (GM-24), `governance_execution_authorizations` (GM-25), `governance_execution_claims` (GM-26); UPDATE (`revoked_at`) on `memory_vault_sessions`; all gated by RLS policies. **No UPDATE or DELETE on any of the four governance-staging tables — append-only enforced by triggers plus GRANT absence.** |
-| `lylo_setup` | Offline provisioning script (GM-12) | INSERT/SELECT on the four config tables + `users`; `BYPASSRLS` so it can seed. **No grant on any of the four governance-staging tables.** |
-| `lylo_admin` | Operator | SELECT on most tables; **no** policy on `memory_store` or `memory_vaults`. **SELECT on all four governance-staging tables** — admins are the only role that can see claim/authorization rows in their pilot (GM-25/26: no proposer / reviewer / authorizer / claimant-as-non-admin / family / caregiver SELECT). |
+| `lylo_runtime` | Runtime configuration loader (GM-7b) | SELECT on `pilot_instances`, `companion_profile`, `supported_person_profile`, `setup_state`. **No grant on any of the five governance-staging tables** (`governance_review_queue`, `governance_review_decisions`, `governance_execution_authorizations`, `governance_execution_claims`, `governance_execution_attempts`). |
+| `lylo_app` | Memory-governance runtime + all five governance-staging actors (GM-23 through GM-27) | SELECT on all client-scoped tables; INSERT on `memory_store`, `governance_audit_log`, `memory_vault_sessions`, and the five governance-staging tables (`governance_review_queue` GM-23, `governance_review_decisions` GM-24, `governance_execution_authorizations` GM-25, `governance_execution_claims` GM-26, `governance_execution_attempts` GM-27); UPDATE (`revoked_at`) on `memory_vault_sessions`; all gated by RLS policies. **No UPDATE or DELETE on any of the five governance-staging tables — append-only enforced by triggers plus GRANT absence.** |
+| `lylo_setup` | Offline provisioning script (GM-12) | INSERT/SELECT on the four config tables + `users`; `BYPASSRLS` so it can seed. **No grant on any of the five governance-staging tables.** |
+| `lylo_admin` | Operator | SELECT on most tables; **no** policy on `memory_store` or `memory_vaults`. **SELECT on all five governance-staging tables** — admins are the only role that can see authorization/claim/attempt rows in their pilot (GM-25/26/27: no proposer / reviewer / authorizer / claimant / attempter-as-non-admin / family / caregiver SELECT). |
 
 Defense in depth: the table-level `GRANT` limits *which tables* a role
 can address at all; RLS policies limit *which rows* within those
@@ -314,6 +314,54 @@ the table outside the documented writing path. **H27** asserts
 the `future_*` prefix discipline on EXECUTION_SURFACES. **H28**
 asserts the actor file contains no operational vocabulary.
 
+### `governance_execution_attempts` (GM-27)
+
+Two policies — admin-only INSERT and admin-only SELECT.
+
+1. **`attempt_insert_admin`** (INSERT WITH CHECK) — tenant
+   match AND `attempted_by_user_id = current_setting('app.user_id')`
+   AND `current_setting('app.user_role') = 'admin'`.
+2. **`attempt_admin_select`** (SELECT) — tenant match AND
+   `app.user_role = 'admin'`.
+
+**No proposer / reviewer / authorizer / claimant /
+attempter-as-non-admin / family / caregiver SELECT policy.**
+Attempts are admin-only governance metadata.
+
+**No UPDATE / DELETE policy.** Append-only at every layer.
+
+A **BEFORE-INSERT preconditions trigger** walks the 5-deep chain
+attempt → claim → authorization → review_decision and raises if
+any of five data preconditions fail:
+- the referenced claim must exist in the same pilot,
+- `authorization_scope` on the attempt must equal the claim's
+  scope (drift detection),
+- `execution_surface` on the attempt must equal the claim's
+  surface (drift detection),
+- `claimed_by_user_id` ≠ `attempted_by_user_id` (self-attempt
+  forbidden),
+- the underlying `review_decision.review_outcome` must still be
+  `'approved'` (defense in depth).
+
+`UNIQUE(execution_claim_id)` forbids retry / multi-attempt
+semantics. The DB cannot represent multiple attempts against
+the same claim.
+
+The `attempted_by_role` column has a locked CHECK (`= 'admin'`);
+`authorization_scope` inherits GM-25's 4-value vocab;
+`execution_surface` inherits GM-26's 4-value vocab.
+
+**Constitutional rule:** *ATTEMPT IS NOT OUTCOME.* An attempt
+row records ONLY the beginning of an attempt — never success,
+failure, completion, interruption, delivery, dispatch,
+finalization, or commit state. No production code in GM-27
+consumes `governance_execution_attempts` operationally.
+Adversarial test **I23** is a static-scan canary; **I24** is a
+file-scoped forbidden-vocabulary scan on the actor file
+(stricter than GM-26 H28 — adds `committed`); **I27** is a
+doc-presence canary asserting the boundary doc retains both
+"What this is NOT" and "What remains unresolved" sections.
+
 ### `governance_audit_log`
 
 - Admins see all in-pilot events (SELECT).
@@ -394,6 +442,7 @@ in either suite fails the build. See `baseline-ci.md`.
 | Review-decision substrate: `db/migrations/009_review_decisions.sql` adds `governance_review_decisions` (admin-only INSERT WITH CHECK, admin + proposer SELECT, append-only trigger, self-review BEFORE-INSERT trigger, UNIQUE on review_queue_id). `src/review/` extends with three new ctx operations (listPending / inspect / record); `src/actors/review-decision-actor.js` is the third Decision-gated actor (seven-layer verification chain, admin-only role). Reuses `LYLO_APP_DATABASE_URL` (no new env). Integration matrix proves admin records / proposer reads outcome / family-caregiver-denied / self-review-rejected / double-review-rejected / cross-pilot-rejected / append-only-enforced / lylo_runtime-grant-denied. No production consumer — recording is NOT execution; approval is NOT authorization | Landed | GM-24 |
 | Execution-authorization substrate: `db/migrations/010_execution_authorizations.sql` adds `governance_execution_authorizations` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, preconditions BEFORE-INSERT trigger walking the full chain to enforce review-approved + non-self-authorization + scope-↔-intent matching, UNIQUE on review_decision_id). `src/review/` extends with three new ctx operations (recordExecutionAuthorization / listExecutionAuthorizations / inspectExecutionAuthorization); `src/actors/execution-authorization-actor.js` is the fourth Decision-gated actor (eight-layer verification chain, admin-only role, vocabulary locks). Reuses `LYLO_APP_DATABASE_URL` (no new env). Integration matrix proves admin authorizes / proposer-denied / non-admin-denied / self-authorization-rejected / rejected-review-rejected / scope-mismatch-rejected / double-authorization-rejected / cross-pilot-rejected / append-only-enforced / lylo_runtime-grant-denied. **No production consumer.** Adversarial G13 is a static-scan canary that mechanically refuses any consumer reference outside the documented writing path. Authorization is NOT execution; an authorization row is NOT an execution signal | Landed | GM-25 |
 | Execution-claim substrate: `db/migrations/011_execution_claims.sql` adds `governance_execution_claims` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, BEFORE-INSERT preconditions trigger walking authorization → review_decision and enforcing scope equality + non-self-claim + surface ↔ scope 1:1 mapping + chain-walk to review_outcome = 'approved', UNIQUE on execution_authorization_id as the replay-prevention wall). `src/review/` extends with three new ctx operations (recordExecutionClaim / listExecutionClaims / inspectExecutionClaim); `src/actors/execution-claim-ledger-actor.js` is the fifth Decision-gated actor (ten-layer verification chain, admin-only role, dual vocabulary locks AUTHORIZATION_SCOPES + EXECUTION_SURFACES). Reuses `LYLO_APP_DATABASE_URL`. Fixture adds admin3-A/admin3-B (per OQ-26.15) so claimant ≠ authorizer naturally (admin authorizes; admin3 claims). Integration matrix proves admin3 claims / proposer-denied / family-denied / self-claim-trigger-raises / replay-UNIQUE-raises / scope-drift-trigger-raises / surface-mismatch-trigger-raises / cross-pilot-FK-rejection / append-only-enforced / lylo_runtime-grant-denied. **No production consumer.** Adversarial H22 = static-scan canary enforces zero references outside writing path; H27 = future_* prefix discipline on EXECUTION_SURFACES; H28 = file-scoped forbidden-vocabulary scan on the ledger actor. Claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success — claim ONLY means "this authorization has now been consumed exactly once" | Landed | GM-26 |
+| Execution-attempt substrate: `db/migrations/012_execution_attempts.sql` adds `governance_execution_attempts` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, BEFORE-INSERT preconditions trigger walking claim → authorization → review_decision and enforcing scope equality with claim + surface equality with claim + non-self-attempt + 5-deep chain-walk to review_outcome = 'approved', UNIQUE on execution_claim_id forbidding retry / multi-attempt). `src/review/` extends with three new ctx operations (recordExecutionAttempt / listExecutionAttempts / inspectExecutionAttempt); `src/actors/execution-attempt-ledger-actor.js` is the sixth Decision-gated actor (ten-layer verification chain). Reuses `LYLO_APP_DATABASE_URL`. Fixture adds admin4-A/admin4-B (per OQ-27.15) so attempter ≠ claimant naturally (admin3 claims; admin4 attempts). Integration matrix proves admin4 attempts / proposer-denied / family-denied / self-attempt-trigger-raises / replay-UNIQUE-raises / scope-drift-trigger-raises / surface-drift-trigger-raises / cross-pilot-FK-rejection / append-only-enforced / lylo_runtime-grant-denied. **No production consumer.** Three adversarial canaries: I23 = static-scan zero-references-outside-writing-path; I24 = file-scoped forbidden-vocabulary scan on the ledger actor (STRICTER than H28 — adds `committed`); I27 = doc-presence canary asserting both "What this is NOT" and "What remains unresolved" sections remain in the boundary doc. **ATTEMPT IS NOT OUTCOME** — records ONLY the beginning of an attempt; never success, failure, completion, interruption, delivery, dispatch, finalization, or commit state | Landed | GM-27 |
 
 As of GM-16 the connection wire-up is complete:
 
