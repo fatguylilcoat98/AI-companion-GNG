@@ -83,6 +83,18 @@ const INTENT_TYPES = Object.freeze({
   // authorization; authorization is NOT execution; an
   // authorization row is NOT an execution signal.
   GOVERNANCE_EXECUTION_AUTHORIZE: 'governance.execution.authorize',
+
+  // GM-26: recording an admin's explicit claim of an authorization
+  // for a specific future execution surface. Classifier returns
+  // `admissible` — role enforcement (admin only), data
+  // preconditions (referenced authorization exists, scope
+  // equality, claimant ≠ authorizer, surface ↔ scope mapping,
+  // upstream review still approved), and the recording itself
+  // live at the execution-claim-ledger actor + DB BEFORE-INSERT
+  // trigger. Constitutional rule: claim is NOT execution; claim
+  // is NOT dispatch; claim only means "this authorization has now
+  // been consumed exactly once."
+  GOVERNANCE_EXECUTION_CLAIM: 'governance.execution.claim',
 });
 
 const ALL_INTENT_TYPES = new Set(Object.values(INTENT_TYPES));

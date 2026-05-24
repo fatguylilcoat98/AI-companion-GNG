@@ -18,7 +18,12 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   -- seeded with authorizer != reviewer (admin-A reviews; admin2-A
   -- authorizes). The CHECK on `users.role` accepts 'admin' for
   -- multiple users per pilot; only `senior` is one-per-pilot.
-  ('aaaaaaaa-5555-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin2-A',     'admin');
+  ('aaaaaaaa-5555-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin2-A',     'admin'),
+  -- GM-26: third admin per pilot so claim rows can be seeded
+  -- with claimant != authorizer (admin2-A authorizes; admin3-A
+  -- claims). Adjacent-only separation-of-duties chain extends
+  -- one more stage.
+  ('aaaaaaaa-6666-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin3-A',     'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('11111111-1111-1111-1111-111111111111', 'Aria', '{"tone":"warm"}'::jsonb);
@@ -121,7 +126,10 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   ('bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin-B',  'admin'),
   -- GM-25: second admin per pilot (see comment in Pilot A users
   -- block above).
-  ('bbbbbbbb-5555-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin2-B', 'admin');
+  ('bbbbbbbb-5555-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin2-B', 'admin'),
+  -- GM-26: third admin per pilot (see comment in Pilot A users
+  -- block above).
+  ('bbbbbbbb-6666-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin3-B', 'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('22222222-2222-2222-2222-222222222222', 'Bram', '{"tone":"steady"}'::jsonb);
@@ -289,3 +297,25 @@ INSERT INTO governance_execution_authorizations
    'admin',
    'memory_candidate_admission',
    'admin_explicit_authorization');
+
+-- GM-26: claim rows. claimant (admin3) != authorizer (admin2).
+-- execution_surface must fit authorization_scope —
+-- memory_candidate_admission → future_memory_admission_consumer.
+INSERT INTO governance_execution_claims
+  (id, pilot_instance_id, execution_authorization_id,
+   authorization_scope, execution_surface,
+   claimed_by_user_id, claimed_by_role) VALUES
+  ('aaaaaaaa-bbbb-1111-1111-a00000000001',
+   '11111111-1111-1111-1111-111111111111',
+   'aaaaaaaa-cccc-1111-1111-900000000001',
+   'memory_candidate_admission',
+   'future_memory_admission_consumer',
+   'aaaaaaaa-6666-1111-1111-aaaaaaaaaaaa',
+   'admin'),
+  ('bbbbbbbb-bbbb-2222-2222-b00000000001',
+   '22222222-2222-2222-2222-222222222222',
+   'bbbbbbbb-cccc-2222-2222-900000000001',
+   'memory_candidate_admission',
+   'future_memory_admission_consumer',
+   'bbbbbbbb-6666-2222-2222-bbbbbbbbbbbb',
+   'admin');

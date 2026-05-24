@@ -784,3 +784,139 @@ test('governance_execution_authorizations INSERT: duplicate authorization for sa
     );
   });
 });
+
+// ---------------------------------------------------------------------
+// governance_execution_claims (GM-26): admin-only SELECT; no
+// proposer / reviewer / authorizer / claimant-as-non-admin /
+// family / caregiver visibility. INSERT requires admin role +
+// tenant + no impersonation. UNIQUE(execution_authorization_id)
+// is the replay-prevention wall.
+// ---------------------------------------------------------------------
+
+const ADMIN3_A = 'aaaaaaaa-6666-1111-1111-aaaaaaaaaaaa';
+const ADMIN3_B = 'bbbbbbbb-6666-2222-2222-bbbbbbbbbbbb';
+const CLAIM_A = 'aaaaaaaa-bbbb-1111-1111-a00000000001';
+const CLAIM_B = 'bbbbbbbb-bbbb-2222-2222-b00000000001';
+const AUTH_A_FOR_CLAIM = 'aaaaaaaa-cccc-1111-1111-900000000001';
+
+test('governance_execution_claims: admin in pilot sees the recorded claim', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_claims', 'id');
+    assert.ok(ids.includes(CLAIM_A), 'admin must see claims in pilot');
+    assert.equal(ids.includes(CLAIM_B), false, 'admin must NOT see pilot-B claims');
+  });
+});
+
+test('governance_execution_claims: senior-A (proposer) sees nothing', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    assert.deepEqual(await visibleIds(client, 'governance_execution_claims', 'id'), []);
+  });
+});
+
+test('governance_execution_claims: family / caregiver see nothing', async () => {
+  const c = await setup();
+  for (const [user, role] of [[FAMILY_A, 'family'], [CAREGIVER_A, 'caregiver']]) {
+    await withContext(c, { role: 'lylo_app', pilot: PILOT_A, user, userRole: role }, async (client) => {
+      assert.deepEqual(await visibleIds(client, 'governance_execution_claims', 'id'), []);
+    });
+  }
+});
+
+test('governance_execution_claims: cross-pilot — pilot-B admin sees only pilot-B claim', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_B, user: 'bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_claims', 'id');
+    assert.deepEqual(ids.sort(), [CLAIM_B]);
+  });
+});
+
+test('governance_execution_claims: lylo_runtime has no grant — SELECT permission denied', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_claims'),
+      /permission denied/i
+    );
+  });
+});
+
+test('governance_execution_claims INSERT: non-admin role rejected by WITH CHECK', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_claims '
+          + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_A, AUTH_A_FOR_CLAIM, SENIOR_A]
+      ),
+      /row.level security|new row violates row.level/i
+    );
+  });
+});
+
+test('governance_execution_claims INSERT: admin cannot impersonate another claimed_by_user_id', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN3_A, userRole: 'admin',
+  }, async (client) => {
+    // Impersonate ADMIN2_A as claimant while connected as ADMIN3_A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_claims '
+          + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_A, AUTH_A_FOR_CLAIM, ADMIN2_A]
+      ),
+      /row.level security|new row violates row.level|duplicate key|unique/i
+    );
+  });
+});
+
+test('governance_execution_claims INSERT: cross-pilot rejected (composite FK + RLS)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN3_A, userRole: 'admin',
+  }, async (client) => {
+    // Try to claim pilot-B's authorization from pilot A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_claims '
+          + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_B, 'bbbbbbbb-cccc-2222-2222-900000000001', ADMIN3_A]
+      ),
+      /row.level security|new row violates row.level|foreign key/i
+    );
+  });
+});
+
+test('governance_execution_claims INSERT: replay (duplicate claim for same authorization) rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN3_A, userRole: 'admin',
+  }, async (client) => {
+    // AUTH_A_FOR_CLAIM already has CLAIM_A seeded; second claim fails UNIQUE.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_claims '
+          + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_A, AUTH_A_FOR_CLAIM, ADMIN3_A]
+      ),
+      /duplicate key|unique/i
+    );
+  });
+});

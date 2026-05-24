@@ -41,6 +41,18 @@
  *               to act. No production code consumes the
  *               authorization row in GM-25; execution remains a
  *               separately-gated decision.
+ *   CLAIM_RECORDED — GM-26: an admin's explicit claim of an
+ *               authorization (against an authorization in the
+ *               same pilot, with surface fitting the scope, by a
+ *               human different from the authorizer, against a
+ *               still-approved underlying review) was durably
+ *               recorded into governance_execution_claims. The
+ *               execution-claim-ledger actor returns this outcome
+ *               on the happy path. Constitutional rule: claim is
+ *               NOT execution, NOT dispatch, NOT completion, NOT
+ *               success — it ONLY means "this authorization has
+ *               now been consumed exactly once." No production
+ *               code consumes claim rows in GM-26.
  */
 
 const OUTCOMES = Object.freeze({
@@ -50,6 +62,7 @@ const OUTCOMES = Object.freeze({
   STAGED:              'staged',
   RECORDED:            'recorded',
   AUTHORIZED_RECORDED: 'authorized_recorded',
+  CLAIM_RECORDED:      'claim_recorded',
 });
 
 module.exports = { OUTCOMES };

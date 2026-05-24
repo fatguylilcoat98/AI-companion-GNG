@@ -783,3 +783,213 @@ test('real-schema: governance_execution_authorizations append-only — DELETE ra
     /append.only/i
   );
 });
+
+// ---------------------------------------------------------------------
+// governance_execution_claims (GM-26) — real-schema RLS,
+// append-only trigger, BEFORE-INSERT preconditions trigger
+// (authorization-exists + scope-equality + claimant-≠-authorizer +
+// surface-↔-scope + review-still-approved).
+// ---------------------------------------------------------------------
+
+const ADMIN3_A = 'aaaaaaaa-6666-1111-1111-aaaaaaaaaaaa';
+const CLAIM_A = 'aaaaaaaa-bbbb-1111-1111-a00000000001';
+const CLAIM_B = 'bbbbbbbb-bbbb-2222-2222-b00000000001';
+const AUTH_A_FOR_CLAIM = 'aaaaaaaa-cccc-1111-1111-900000000001';
+
+test('real-schema: governance_execution_claims — admin sees claim rows in pilot', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_claims', 'id');
+    assert.ok(ids.includes(CLAIM_A));
+    assert.equal(ids.includes(CLAIM_B), false);
+  });
+});
+
+test('real-schema: governance_execution_claims — proposer / family see nothing', async () => {
+  const c = await setup();
+  for (const [user, role] of [[SENIOR_A, 'senior'], [FAMILY_A, 'family']]) {
+    await withContext(c, { role: 'lylo_app', pilot: PILOT_A, user, userRole: role }, async (client) => {
+      assert.deepEqual(await visibleIds(client, 'governance_execution_claims', 'id'), []);
+    });
+  }
+});
+
+test('real-schema: governance_execution_claims — lylo_runtime denied at GRANT layer', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_claims'),
+      /permission denied/i
+    );
+  });
+});
+
+test('real-schema: governance_execution_claims INSERT — self-claim rejected by BEFORE-INSERT trigger', async () => {
+  // Bypass RLS via superuser to hit the trigger directly. AUTH_A
+  // was authorized by ADMIN2_A; inserting a claim by ADMIN2_A
+  // for the same authorization triggers the self-claim check.
+  // First need a never-claimed authorization. Create a fresh
+  // queue → review → authorization chain via superuser.
+  const c = await setup();
+  await c.query(
+    'INSERT INTO governance_review_queue '
+      + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
+      + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
+    ['aaaaaaaa-eeee-1111-1111-700000088881', PILOT_A, SENIOR_A]
+  );
+  await c.query(
+    'INSERT INTO governance_review_decisions '
+      + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
+    [
+      'aaaaaaaa-dddd-1111-1111-800000088881',
+      PILOT_A,
+      'aaaaaaaa-eeee-1111-1111-700000088881',
+      ADMIN_A,
+    ]
+  );
+  await c.query(
+    'INSERT INTO governance_execution_authorizations '
+      + '(id, pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+    [
+      'aaaaaaaa-cccc-1111-1111-900000088881',
+      PILOT_A,
+      'aaaaaaaa-dddd-1111-1111-800000088881',
+      ADMIN2_A,
+    ]
+  );
+  // Now try to claim it as ADMIN2_A — same human who authorized.
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_claims '
+        + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+        + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+      [PILOT_A, 'aaaaaaaa-cccc-1111-1111-900000088881', ADMIN2_A]
+    ),
+    /self-claim forbidden/i
+  );
+});
+
+test('real-schema: governance_execution_claims INSERT — scope drift rejected by trigger', async () => {
+  // Create a fresh authorization with scope memory_candidate_admission.
+  const c = await setup();
+  await c.query(
+    'INSERT INTO governance_review_queue '
+      + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
+      + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
+    ['aaaaaaaa-eeee-1111-1111-700000088882', PILOT_A, SENIOR_A]
+  );
+  await c.query(
+    'INSERT INTO governance_review_decisions '
+      + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
+    [
+      'aaaaaaaa-dddd-1111-1111-800000088882',
+      PILOT_A,
+      'aaaaaaaa-eeee-1111-1111-700000088882',
+      ADMIN_A,
+    ]
+  );
+  await c.query(
+    'INSERT INTO governance_execution_authorizations '
+      + '(id, pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+    [
+      'aaaaaaaa-cccc-1111-1111-900000088882',
+      PILOT_A,
+      'aaaaaaaa-dddd-1111-1111-800000088882',
+      ADMIN2_A,
+    ]
+  );
+  // Try to claim with a DIFFERENT authorization_scope (drift).
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_claims '
+        + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+        + "VALUES ($1, $2, 'future_vault_action', 'future_vault_action_consumer', $3, 'admin')",
+      [PILOT_A, 'aaaaaaaa-cccc-1111-1111-900000088882', ADMIN3_A]
+    ),
+    /authorization_scope drift/i
+  );
+});
+
+test('real-schema: governance_execution_claims INSERT — surface ↔ scope mismatch rejected by trigger', async () => {
+  // Create a fresh authorization with scope memory_candidate_admission.
+  const c = await setup();
+  await c.query(
+    'INSERT INTO governance_review_queue '
+      + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
+      + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
+    ['aaaaaaaa-eeee-1111-1111-700000088883', PILOT_A, SENIOR_A]
+  );
+  await c.query(
+    'INSERT INTO governance_review_decisions '
+      + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
+    [
+      'aaaaaaaa-dddd-1111-1111-800000088883',
+      PILOT_A,
+      'aaaaaaaa-eeee-1111-1111-700000088883',
+      ADMIN_A,
+    ]
+  );
+  await c.query(
+    'INSERT INTO governance_execution_authorizations '
+      + '(id, pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+    [
+      'aaaaaaaa-cccc-1111-1111-900000088883',
+      PILOT_A,
+      'aaaaaaaa-dddd-1111-1111-800000088883',
+      ADMIN2_A,
+    ]
+  );
+  // Now claim with MATCHING scope but WRONG surface.
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_claims '
+        + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+        + "VALUES ($1, $2, 'memory_candidate_admission', 'future_vault_action_consumer', $3, 'admin')",
+      [PILOT_A, 'aaaaaaaa-cccc-1111-1111-900000088883', ADMIN3_A]
+    ),
+    /does not fit authorization_scope/i
+  );
+});
+
+test('real-schema: governance_execution_claims INSERT — replay (duplicate claim) rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN3_A, userRole: 'admin',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_claims '
+          + '(pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, 'admin')",
+        [PILOT_A, AUTH_A_FOR_CLAIM, ADMIN3_A]
+      ),
+      /duplicate key|unique/i
+    );
+  });
+});
+
+test('real-schema: governance_execution_claims append-only — UPDATE raises', async () => {
+  const c = await setup();
+  await assert.rejects(
+    () => c.query("UPDATE governance_execution_claims SET execution_surface = 'future_memory_admission_consumer' WHERE id = $1", [CLAIM_A]),
+    /append.only/i
+  );
+});
+
+test('real-schema: governance_execution_claims append-only — DELETE raises', async () => {
+  const c = await setup();
+  await assert.rejects(
+    () => c.query('DELETE FROM governance_execution_claims WHERE id = $1', [CLAIM_A]),
+    /append.only/i
+  );
+});

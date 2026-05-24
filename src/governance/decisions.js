@@ -61,6 +61,11 @@ const REASONS = Object.freeze({
   // to verify. Same posture as GM-24 — role + data preconditions
   // are enforced at the actor + DB trigger, not in the classifier.
   EXECUTION_AUTHORIZATION_RECORDING_PERMITTED: 'execution_authorization_recording_permitted',
+  // GM-26: the classifier admits GOVERNANCE_EXECUTION_CLAIM
+  // intents so the execution-claim-ledger actor has a Decision
+  // to verify. Same posture — role + data preconditions are
+  // enforced at the actor + DB trigger, not in the classifier.
+  EXECUTION_CLAIM_RECORDING_PERMITTED: 'execution_claim_recording_permitted',
 });
 
 const ALL_REASONS = new Set(Object.values(REASONS));
@@ -95,6 +100,8 @@ const POLICY_REFS = Object.freeze({
     'review-decision-runtime-boundary.md §3',
   [REASONS.EXECUTION_AUTHORIZATION_RECORDING_PERMITTED]:
     'execution-authorization-runtime-boundary.md §3',
+  [REASONS.EXECUTION_CLAIM_RECORDING_PERMITTED]:
+    'execution-claim-runtime-boundary.md §3',
 });
 
 // Module-private token. External code cannot reach this Symbol —

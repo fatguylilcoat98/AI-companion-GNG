@@ -249,3 +249,38 @@ CREATE TABLE governance_execution_authorizations (
   FOREIGN KEY (pilot_instance_id, review_decision_id)
     REFERENCES governance_review_decisions (pilot_instance_id, id)
 );
+
+-- GM-26: the execution-claim substrate. Structural mirror of
+-- db/migrations/011_execution_claims.sql, MINUS the append-only
+-- and preconditions BEFORE-INSERT triggers (the synthetic
+-- contract verifies access-control rules, not write-integrity
+-- triggers).
+CREATE TABLE governance_execution_claims (
+  id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pilot_instance_id           UUID NOT NULL REFERENCES pilot_instances(id),
+  execution_authorization_id  UUID NOT NULL,
+  authorization_scope         TEXT NOT NULL
+    CHECK (authorization_scope IN (
+      'memory_candidate_admission',
+      'future_external_action',
+      'future_visibility_change',
+      'future_vault_action'
+    )),
+  execution_surface           TEXT NOT NULL
+    CHECK (execution_surface IN (
+      'future_memory_admission_consumer',
+      'future_external_action_consumer',
+      'future_visibility_change_consumer',
+      'future_vault_action_consumer'
+    )),
+  claimed_by_user_id          UUID NOT NULL,
+  claimed_by_role             TEXT NOT NULL
+    CHECK (claimed_by_role = 'admin'),
+  created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (execution_authorization_id),
+  UNIQUE (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, claimed_by_user_id)
+    REFERENCES users (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, execution_authorization_id)
+    REFERENCES governance_execution_authorizations (pilot_instance_id, id)
+);
