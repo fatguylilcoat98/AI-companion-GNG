@@ -130,6 +130,21 @@ store. Demo / sample memory only, clearly fictional. Real memory exists
 only inside a deployed companion instance. See
 `../setup/template-boundaries.md`.
 
+## 17. Mechanical enforcement (GM-21)
+
+A subset of this policy is mechanically enforced by the execution-
+decision classifier in `src/governance/` (see
+`governance-runtime-boundary.md`). Specifically: §2/§3 (model
+self-promotion forbidden), §3/§5 (`AI_INFERRED` must not auto-
+promote), §4 (`USER_STATED` defaults to review), §6 (retraction
+infrastructure not yet available), §7 (supersession infrastructure
+not yet available), §12 (visibility promotion requires authority
+validation), and §13 (vault infrastructure not yet available) all
+have paired classifier branches and citations in the locked
+`REASONS` vocabulary. Edits to those sections require paired
+updates to `src/governance/decisions.js` and
+`src/governance/classifier.js`, in the same PR.
+
 ## Change control
 
 Locked. Changes are made by a reviewed change to this file, which lists
