@@ -250,14 +250,143 @@ async function recordReviewDecision(client, sessionCtx, input) {
   };
 }
 
+// ---------------------------------------------------------------------
+// GM-25: execution-authorization read + write surface.
+// ---------------------------------------------------------------------
+
+// Mirrors the GM-24 review_outcome / review_reason locked
+// vocabularies. CHECK constraints in
+// db/migrations/010_execution_authorizations.sql are authoritative.
+const VALID_AUTHORIZATION_SCOPES = new Set([
+  'memory_candidate_admission',
+  'future_external_action',
+  'future_visibility_change',
+  'future_vault_action',
+]);
+
+const VALID_AUTHORIZATION_REASONS = new Set([
+  'admin_explicit_authorization',
+]);
+
+const VALID_AUTHORIZATION_ROLES = new Set(['admin']);
+
+// recordExecutionAuthorization — single INSERT into
+// governance_execution_authorizations. The actor
+// (src/actors/execution-authorization-actor.js) is responsible
+// for the eight-layer Decision verification + admin role check;
+// this function performs vocabulary validation and the INSERT.
+// authorized_by_user_id + pilot_instance_id ALWAYS come from
+// session context (never from input) — RLS WITH CHECK enforces
+// no-impersonation; the BEFORE-INSERT trigger enforces the
+// four data preconditions (review exists, approved, no self-
+// authorization, scope ↔ intent).
+async function recordExecutionAuthorization(client, sessionCtx, input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('recordExecutionAuthorization: input is required');
+  }
+  const { reviewDecisionId, authorizationScope, authorizationReason } = input;
+
+  if (typeof reviewDecisionId !== 'string' || !UUID_RE.test(reviewDecisionId)) {
+    throw new Error('recordExecutionAuthorization: reviewDecisionId must be a UUID');
+  }
+  if (!VALID_AUTHORIZATION_SCOPES.has(authorizationScope)) {
+    throw new Error(
+      `recordExecutionAuthorization: authorizationScope must be one of ${Array.from(VALID_AUTHORIZATION_SCOPES).join(', ')}`
+    );
+  }
+  if (!VALID_AUTHORIZATION_REASONS.has(authorizationReason)) {
+    throw new Error(
+      `recordExecutionAuthorization: authorizationReason must be one of ${Array.from(VALID_AUTHORIZATION_REASONS).join(', ')}`
+    );
+  }
+  // sessionCtx.userRole is also constrained at the actor layer
+  // (must be 'admin'); the repository asserts it again so a future
+  // caller that bypasses the actor still gets a clean failure.
+  if (!VALID_AUTHORIZATION_ROLES.has(sessionCtx.userRole)) {
+    throw new Error(
+      `recordExecutionAuthorization: sessionCtx.userRole must be one of ${Array.from(VALID_AUTHORIZATION_ROLES).join(', ')}`
+    );
+  }
+
+  const inserted = await client.query(
+    'INSERT INTO governance_execution_authorizations '
+      + '(pilot_instance_id, review_decision_id, authorized_by_user_id, '
+      + 'authorized_by_role, authorization_scope, authorization_reason) '
+      + 'VALUES ($1, $2, $3, $4, $5, $6) '
+      + 'RETURNING id, created_at',
+    [
+      sessionCtx.pilotInstanceId,
+      reviewDecisionId,
+      sessionCtx.userId,
+      sessionCtx.userRole,
+      authorizationScope,
+      authorizationReason,
+    ]
+  );
+
+  return {
+    id: inserted.rows[0].id,
+    created_at: inserted.rows[0].created_at,
+  };
+}
+
+// listExecutionAuthorizations — admin-only listing. RLS narrows to
+// admin (auth_admin_select) — the actor enforces admin role at
+// the seventh verification layer; this read is the operator-audit
+// path. Returns up to `limit` rows, ordered newest first.
+async function listExecutionAuthorizations(client, sessionCtx, options) {
+  const opts = options || {};
+  const requestedLimit = opts.limit;
+  let limit = DEFAULT_LIST_LIMIT;
+  if (requestedLimit !== undefined) {
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      throw new Error('listExecutionAuthorizations: limit must be a positive integer');
+    }
+    limit = Math.min(requestedLimit, MAX_LIST_LIMIT);
+  }
+  const result = await client.query(
+    'SELECT id, review_decision_id, authorized_by_user_id, '
+      + 'authorized_by_role, authorization_scope, authorization_reason, '
+      + 'created_at '
+      + 'FROM governance_execution_authorizations '
+      + 'ORDER BY created_at DESC '
+      + 'LIMIT $1',
+    [limit]
+  );
+  return result.rows;
+}
+
+// inspectExecutionAuthorization — admin-only single-row lookup.
+// Returns null if not visible under the current RLS context.
+async function inspectExecutionAuthorization(client, sessionCtx, authorizationId) {
+  if (typeof authorizationId !== 'string' || !UUID_RE.test(authorizationId)) {
+    throw new Error('inspectExecutionAuthorization: authorizationId must be a UUID');
+  }
+  const result = await client.query(
+    'SELECT id, review_decision_id, authorized_by_user_id, '
+      + 'authorized_by_role, authorization_scope, authorization_reason, '
+      + 'created_at '
+      + 'FROM governance_execution_authorizations '
+      + 'WHERE id = $1',
+    [authorizationId]
+  );
+  return result.rows.length === 0 ? null : result.rows[0];
+}
+
 module.exports = {
   stageReviewItem,
   listPendingReviewItems,
   inspectReviewItem,
   recordReviewDecision,
+  recordExecutionAuthorization,
+  listExecutionAuthorizations,
+  inspectExecutionAuthorization,
   VALID_DECISION_INTENT_TYPES,
   VALID_DECISION_REASONS,
   VALID_PROPOSER_ROLES,
   VALID_REVIEW_OUTCOMES,
   VALID_REVIEW_REASONS,
+  VALID_AUTHORIZATION_SCOPES,
+  VALID_AUTHORIZATION_REASONS,
+  VALID_AUTHORIZATION_ROLES,
 };

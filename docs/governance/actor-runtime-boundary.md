@@ -79,14 +79,15 @@ and may extend the boundary guard's allowed-import list (e.g. to
 permit `../memory` entry imports). Every such extension is a
 deliberate boundary change.
 
-## 2. Public API surface (GM-22 + GM-23 + GM-24)
+## 2. Public API surface (GM-22 + GM-23 + GM-24 + GM-25)
 
 | Export | Purpose |
 |---|---|
-| `createResponseDeliveryActor({conversationRuntime, log?})` | GM-22. Factory. Returns a frozen actor with exactly one method, `execute(decision, params)`. The caller injects an already-constructed conversation runtime (so the actor is testable with a mocked runtime — no model dependency in unit tests). |
-| `createReviewQueueActor({reviewQueuePool, log?})` | GM-23. Factory. Returns a frozen actor with exactly one method, `execute(decision, params)`. Stages `requires_review` Decisions into `governance_review_queue` via the GM-23 review-queue substrate. |
-| `createReviewDecisionActor({reviewQueuePool, log?})` | GM-24. Factory. Returns a frozen actor with exactly one method, `execute(decision, params)`. Records a human admin's review outcome (`approved` \| `rejected`) against a pending queue item, into `governance_review_decisions`. **Admin role only.** Recording is NOT execution; approval is NOT authorization. |
-| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED}` enum. `RECORDED` is the GM-24 addition; the five-way set is snapshot-locked in the adversarial suite (C4). |
+| `createResponseDeliveryActor({conversationRuntime, log?})` | GM-22. Factory. Returns a frozen actor with exactly one method, `execute(decision, params)`. |
+| `createReviewQueueActor({reviewQueuePool, log?})` | GM-23. Stages `requires_review` Decisions into `governance_review_queue`. |
+| `createReviewDecisionActor({reviewQueuePool, log?})` | GM-24. Records a human admin's review outcome (`approved` \| `rejected`) against a pending queue item, into `governance_review_decisions`. **Admin role only.** Recording is NOT execution; approval is NOT authorization. |
+| `createExecutionAuthorizationActor({reviewQueuePool, log?})` | GM-25. Records an admin's explicit authorization against an approved review_decision, into `governance_execution_authorizations`. **Admin role only**; **authorizer ≠ reviewer**; **scope must match underlying intent type**; review must be **approved**. Authorization is NOT execution; an authorization row is NOT an execution signal. |
+| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED, AUTHORIZED_RECORDED}` enum. `AUTHORIZED_RECORDED` is the GM-25 addition; the six-way set is snapshot-locked in the adversarial suite (C4). |
 
 Internal helpers (`verifyDecisionOrThrow`, `validateParams`,
 `isConversationRuntime`, `isReviewQueuePool`) are NOT re-exported
@@ -208,6 +209,49 @@ authorization; authorization is not execution.* The
 outcome — it is not a signal to act, and no production code in
 GM-24 consumes recorded review decisions for any operational
 purpose.
+
+### 4c. The execution-authorization actor (GM-25) — eighth verification layer
+
+The execution-authorization actor extends the chain with
+actor-specific layers and a different layer-4 lock:
+
+| # | Check | Catches |
+|---|---|---|
+| 4 | `decision.intentType === INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE` | Wrong intent type |
+| 6 | `decision.decision === DECISION_OUTCOMES.ADMISSIBLE` | Outcome confusion (the classifier always returns admissible for this intent type) |
+| 7 | `params.userRole === 'admin'` | Non-admin (rejected BEFORE any DB call) |
+| 8 | `params.authorizationScope ∈ AUTHORIZATION_SCOPES`; `params.authorizationReason ∈ AUTHORIZATION_REASONS`; UUID validation on `pilotInstanceId` / `userId` / `reviewDecisionId` | Vocabulary + structural |
+
+The **four DB-side data preconditions** (review_decision exists
+in same pilot; review_outcome = 'approved'; authorizer ≠
+reviewer; authorization_scope matches underlying intent type)
+are NOT duplicated at the actor — they live in the
+BEFORE-INSERT trigger on `governance_execution_authorizations`.
+Same posture as GM-24's self-review trigger; the actor catches
+early-failure cases, the trigger is the unforgeable wall.
+
+Outcome routing:
+
+| Conditions | Action | Outcome shape |
+|---|---|---|
+| All eight layers pass + DB trigger passes | One INSERT into `governance_execution_authorizations` via `withReviewContext` | `{outcome: 'authorized_recorded', decision, authorizationId, createdAt}` |
+| Any actor-layer failure | THROW (before any DB call) | — |
+| DB trigger raises | THROW (wrapped in `ReviewRepositoryError`) | — |
+
+The substrate has **no consumer** in GM-25. The
+`OUTCOMES.AUTHORIZED_RECORDED` value names the act of recording
+an authorization — it is **not** a signal to act. Adversarial
+test **G13** is a static-scan canary that asserts zero
+references to `governance_execution_authorizations` outside the
+documented writing path; it will fail the build if any future GM
+accidentally introduces a consumer.
+
+**The constitutional rule (extended at GM-25):** *approval is
+not authorization; authorization is not execution; an
+authorization row is NOT an execution signal.*
+
+See `execution-authorization-runtime-boundary.md` for the full
+substrate contract.
 
 ## 5. The conversation runtime is unchanged
 

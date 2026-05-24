@@ -273,6 +273,50 @@ See `review-decision-runtime-boundary.md` for the substrate
 contract and `actor-runtime-boundary.md` §4b for the actor's
 seventh layer (admin-only role check).
 
+## 6d. First explicit execution authorization persistence lands (GM-25)
+
+GM-25 introduces `src/actors/execution-authorization-actor.js`
+and extends `src/review/` with three read+write operations
+(`recordExecutionAuthorization`, `listExecutionAuthorizations`,
+`inspectExecutionAuthorization`). The substrate
+(`governance_execution_authorizations`) and the actor together
+prove the next invariant:
+
+> You cannot record an execution authorization without admin role
+> + a valid `governance.execution.authorize` Decision + an
+> *approved* review_decision in the same pilot recorded by a
+> *different* admin + an authorization_scope that matches the
+> underlying queue item's intent type.
+
+GM-25 widens this module **minimally**: exactly one new intent
+type (`INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE`), exactly one
+new reason (`REASONS.EXECUTION_AUTHORIZATION_RECORDING_PERMITTED`),
+exactly one new policy-ref entry. The classifier branch returns
+`admissible` unconditionally for this intent type; role
+enforcement (admin only), vocabulary validation, and the four
+data preconditions live at the actor and DB BEFORE-INSERT trigger.
+
+`EVENT_TYPES` remains unchanged in GM-25 (per OQ-25.7 — the
+authorizations table IS the artifact). The GM-18 lock holds;
+adversarial test G11 asserts no new vocabulary slipped in.
+Snapshot tests C2/C3/C4 catch the widening at +1 each (REASONS
+13 values; INTENT_TYPES 10 values; OUTCOMES 6 values).
+
+**Constitutional rule** (added in GM-24, applied at three levels
+by GM-25):
+> *Approval is not authorization; authorization is not execution;
+> an authorization row is NOT an execution signal.*
+
+No production code in GM-25 consumes
+`governance_execution_authorizations` operationally. Adversarial
+test G13 is a **static-scan canary** that asserts zero references
+to the new table outside the documented writing path — the
+defense against any future GM accidentally wiring a consumer.
+
+See `execution-authorization-runtime-boundary.md` for the
+substrate contract and `actor-runtime-boundary.md` §4c for the
+actor's verification chain.
+
 ## 6a. First actor lands (GM-22)
 
 GM-22 introduces `src/actors/` — the first code outside

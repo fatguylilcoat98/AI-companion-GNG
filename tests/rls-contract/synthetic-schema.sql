@@ -217,3 +217,35 @@ CREATE TABLE governance_review_decisions (
   FOREIGN KEY (pilot_instance_id, review_queue_id)
     REFERENCES governance_review_queue (pilot_instance_id, id)
 );
+
+-- GM-25: the execution-authorization substrate. Structural mirror
+-- of db/migrations/010_execution_authorizations.sql, MINUS the
+-- append-only and preconditions BEFORE-INSERT triggers (the
+-- synthetic contract verifies access-control rules, not
+-- write-integrity triggers).
+CREATE TABLE governance_execution_authorizations (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pilot_instance_id        UUID NOT NULL REFERENCES pilot_instances(id),
+  review_decision_id       UUID NOT NULL,
+  authorized_by_user_id    UUID NOT NULL,
+  authorized_by_role       TEXT NOT NULL
+    CHECK (authorized_by_role = 'admin'),
+  authorization_scope      TEXT NOT NULL
+    CHECK (authorization_scope IN (
+      'memory_candidate_admission',
+      'future_external_action',
+      'future_visibility_change',
+      'future_vault_action'
+    )),
+  authorization_reason     TEXT NOT NULL
+    CHECK (authorization_reason IN (
+      'admin_explicit_authorization'
+    )),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (review_decision_id),
+  UNIQUE (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, authorized_by_user_id)
+    REFERENCES users (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, review_decision_id)
+    REFERENCES governance_review_decisions (pilot_instance_id, id)
+);

@@ -60,10 +60,10 @@ per process — `LYLO_RUNTIME_DATABASE_URL`, `LYLO_SETUP_DATABASE_URL`).
 
 | Role | Purpose | Table grants |
 |---|---|---|
-| `lylo_runtime` | Runtime configuration loader (GM-7b) | SELECT on `pilot_instances`, `companion_profile`, `supported_person_profile`, `setup_state`. **No grant on `governance_review_queue` or `governance_review_decisions`** (GM-23 / GM-24). |
-| `lylo_app` | Memory-governance runtime + review-queue + review-decision actors | SELECT on all client-scoped tables; INSERT on `memory_store`, `governance_audit_log`, `memory_vault_sessions`, `governance_review_queue` (GM-23), `governance_review_decisions` (GM-24); UPDATE (`revoked_at`) on `memory_vault_sessions`; all gated by RLS policies. **No UPDATE or DELETE on either review table — append-only enforced by triggers plus GRANT absence.** |
-| `lylo_setup` | Offline provisioning script (GM-12) | INSERT/SELECT on the four config tables + `users`; `BYPASSRLS` so it can seed. **No grant on `governance_review_queue` or `governance_review_decisions`** (GM-23 / GM-24 — provisioning has no business reaching either substrate). |
-| `lylo_admin` | Operator | SELECT on most tables; **no** policy on `memory_store` or `memory_vaults`, so admins cannot see private memories or vault PIN hashes. **SELECT on `governance_review_queue` and `governance_review_decisions`** (GM-23 + GM-24 — admins are the only role that can see all review-queue and review-decision rows in their pilot). |
+| `lylo_runtime` | Runtime configuration loader (GM-7b) | SELECT on `pilot_instances`, `companion_profile`, `supported_person_profile`, `setup_state`. **No grant on `governance_review_queue`, `governance_review_decisions`, or `governance_execution_authorizations`** (GM-23 / GM-24 / GM-25). |
+| `lylo_app` | Memory-governance runtime + review-queue + review-decision + execution-authorization actors | SELECT on all client-scoped tables; INSERT on `memory_store`, `governance_audit_log`, `memory_vault_sessions`, `governance_review_queue` (GM-23), `governance_review_decisions` (GM-24), `governance_execution_authorizations` (GM-25); UPDATE (`revoked_at`) on `memory_vault_sessions`; all gated by RLS policies. **No UPDATE or DELETE on any of the three review/authorization tables — append-only enforced by triggers plus GRANT absence.** |
+| `lylo_setup` | Offline provisioning script (GM-12) | INSERT/SELECT on the four config tables + `users`; `BYPASSRLS` so it can seed. **No grant on `governance_review_queue`, `governance_review_decisions`, or `governance_execution_authorizations`** (provisioning has no business reaching any review/authorization substrate). |
+| `lylo_admin` | Operator | SELECT on most tables; **no** policy on `memory_store` or `memory_vaults`. **SELECT on `governance_review_queue`, `governance_review_decisions`, and `governance_execution_authorizations`** — admins are the only role that can see authorization rows in their pilot (GM-25: no proposer / reviewer / authorizer-as-non-admin / family / caregiver SELECT). |
 
 Defense in depth: the table-level `GRANT` limits *which tables* a role
 can address at all; RLS policies limit *which rows* within those
@@ -211,6 +211,54 @@ operationally. A future execution surface requires its own
 decision gate, its own boundary guard, and its own adversarial
 review.
 
+### `governance_execution_authorizations` (GM-25)
+
+Two policies — admin-only INSERT and admin-only SELECT.
+
+1. **`auth_insert_admin`** (INSERT WITH CHECK) — tenant match
+   AND `authorized_by_user_id = current_setting('app.user_id')`
+   AND `current_setting('app.user_role') = 'admin'`.
+2. **`auth_admin_select`** (SELECT) — tenant match AND
+   `app.user_role = 'admin'`.
+
+**No proposer / reviewer / authorizer-as-non-admin / family /
+caregiver SELECT policy.** Authorizations are admin-to-admin
+governance metadata.
+
+There is **no UPDATE policy** and **no DELETE policy**. The
+table is append-only enforced three ways: the
+BEFORE-UPDATE-OR-DELETE trigger raises, no GRANTs allow
+UPDATE/DELETE to `lylo_app`, and no RLS policy would permit
+either op even if a grant were added.
+
+A **BEFORE-INSERT preconditions trigger** walks the chain
+authorization → review_decision → review_queue and raises if
+any of four data preconditions fail:
+- the referenced review_decision must exist in the same pilot,
+- `review_outcome` must be `'approved'` (cannot authorize a
+  rejected review),
+- `authorized_by_user_id` ≠ `reviewer_user_id` (self-authorization
+  forbidden),
+- `authorization_scope` must match the queue's
+  `decision_intent_type` via the hardcoded mapping documented in
+  `execution-authorization-runtime-boundary.md` §2.
+
+`UNIQUE(review_decision_id)` enforces that each approved review
+is authorized at most once. The DB cannot represent two
+conflicting authorizations for the same review.
+
+The `authorized_by_role` column has a locked CHECK (`= 'admin'`);
+`authorization_scope` is CHECK-locked to a 4-value vocabulary;
+`authorization_reason` is CHECK-locked to a 1-value vocabulary.
+Each widening is its own decision gate.
+
+**Constitutional rule:** recording an authorization is **not**
+execution. An authorization row is **not** an execution signal.
+No production code in GM-25 consumes
+`governance_execution_authorizations` operationally. Adversarial
+test G13 is a static-scan canary that asserts zero references to
+the table outside the documented writing path.
+
 ### `governance_audit_log`
 
 - Admins see all in-pilot events (SELECT).
@@ -289,6 +337,7 @@ in either suite fails the build. See `baseline-ci.md`.
 | Memory-governance module connects as `lylo_app` via `LYLO_APP_DATABASE_URL`; `withMemoryContext` binds `app.pilot_instance_id` / `app.user_id` / `app.user_role` per transaction; audit-bundled read + insert-private surface; dedicated `check-memory-boundary.js` guard; integration matrix proves cross-pilot isolation, family/admin/vault visibility rules, default-deny, audit rollback, cross-user impersonation blocked, and `lylo_app_login` carries no `BYPASSRLS` | Landed | GM-17 |
 | Review-queue substrate: `db/migrations/008_review_queue.sql` adds `governance_review_queue` with CHECK constraints mirroring GM-21 INTENT_TYPES + REASONS, locked `status = 'pending_review'`, BEFORE-UPDATE-OR-DELETE trigger, and the three RLS policies above. `src/review/` library + `src/actors/review-queue-actor.js` connect via the existing `LYLO_APP_DATABASE_URL` (no new env). `withReviewContext` binds the same three session vars. Integration matrix proves cross-pilot isolation, impersonation rejection, proposer/admin/family/caregiver visibility, append-only trigger, runtime/setup role denial | Landed | GM-23 |
 | Review-decision substrate: `db/migrations/009_review_decisions.sql` adds `governance_review_decisions` (admin-only INSERT WITH CHECK, admin + proposer SELECT, append-only trigger, self-review BEFORE-INSERT trigger, UNIQUE on review_queue_id). `src/review/` extends with three new ctx operations (listPending / inspect / record); `src/actors/review-decision-actor.js` is the third Decision-gated actor (seven-layer verification chain, admin-only role). Reuses `LYLO_APP_DATABASE_URL` (no new env). Integration matrix proves admin records / proposer reads outcome / family-caregiver-denied / self-review-rejected / double-review-rejected / cross-pilot-rejected / append-only-enforced / lylo_runtime-grant-denied. No production consumer — recording is NOT execution; approval is NOT authorization | Landed | GM-24 |
+| Execution-authorization substrate: `db/migrations/010_execution_authorizations.sql` adds `governance_execution_authorizations` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, preconditions BEFORE-INSERT trigger walking the full chain to enforce review-approved + non-self-authorization + scope-↔-intent matching, UNIQUE on review_decision_id). `src/review/` extends with three new ctx operations (recordExecutionAuthorization / listExecutionAuthorizations / inspectExecutionAuthorization); `src/actors/execution-authorization-actor.js` is the fourth Decision-gated actor (eight-layer verification chain, admin-only role, vocabulary locks). Reuses `LYLO_APP_DATABASE_URL` (no new env). Integration matrix proves admin authorizes / proposer-denied / non-admin-denied / self-authorization-rejected / rejected-review-rejected / scope-mismatch-rejected / double-authorization-rejected / cross-pilot-rejected / append-only-enforced / lylo_runtime-grant-denied. **No production consumer.** Adversarial G13 is a static-scan canary that mechanically refuses any consumer reference outside the documented writing path. Authorization is NOT execution; an authorization row is NOT an execution signal | Landed | GM-25 |
 
 As of GM-16 the connection wire-up is complete:
 

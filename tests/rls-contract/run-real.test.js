@@ -622,3 +622,164 @@ test('real-schema: governance_review_decisions append-only — DELETE raises', a
     /append.only/i
   );
 });
+
+// ---------------------------------------------------------------------
+// governance_execution_authorizations (GM-25) — real-schema RLS,
+// append-only trigger, preconditions BEFORE-INSERT trigger
+// (review must be approved + authorizer != reviewer + scope ↔ intent).
+// ---------------------------------------------------------------------
+
+const ADMIN2_A = 'aaaaaaaa-5555-1111-1111-aaaaaaaaaaaa';
+const ADMIN2_B = 'bbbbbbbb-5555-2222-2222-bbbbbbbbbbbb';
+const AUTH_A = 'aaaaaaaa-cccc-1111-1111-900000000001';
+const AUTH_B = 'bbbbbbbb-cccc-2222-2222-900000000001';
+const DECISION_A_2 = 'aaaaaaaa-dddd-1111-1111-800000000002';
+const DECISION_B_2 = 'bbbbbbbb-dddd-2222-2222-800000000002';
+
+test('real-schema: governance_execution_authorizations — admin sees authorization rows in pilot', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_authorizations', 'id');
+    assert.ok(ids.includes(AUTH_A));
+    assert.equal(ids.includes(AUTH_B), false);
+  });
+});
+
+test('real-schema: governance_execution_authorizations — proposer / family / caregiver see nothing', async () => {
+  const c = await setup();
+  for (const [user, role] of [[SENIOR_A, 'senior'], [FAMILY_A, 'family']]) {
+    await withContext(c, { role: 'lylo_app', pilot: PILOT_A, user, userRole: role }, async (client) => {
+      assert.deepEqual(await visibleIds(client, 'governance_execution_authorizations', 'id'), []);
+    });
+  }
+});
+
+test('real-schema: governance_execution_authorizations — lylo_runtime denied at GRANT layer', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_authorizations'),
+      /permission denied/i
+    );
+  });
+});
+
+test('real-schema: governance_execution_authorizations INSERT — self-authorization rejected by BEFORE-INSERT trigger', async () => {
+  // Bypass RLS via superuser to hit the trigger directly. The
+  // reviewer of DECISION_A_2 is ADMIN_A; inserting an authorization
+  // by ADMIN_A for that decision triggers the self-authorization check.
+  const c = await setup();
+  // First need a never-authorized approved decision. Insert a fresh
+  // one via superuser (RLS bypassed) so we don't collide with UNIQUE.
+  await c.query(
+    'INSERT INTO governance_review_queue '
+      + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
+      + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
+    ['aaaaaaaa-eeee-1111-1111-700000099991', PILOT_A, SENIOR_A]
+  );
+  await c.query(
+    'INSERT INTO governance_review_decisions '
+      + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
+    [
+      'aaaaaaaa-dddd-1111-1111-800000099991',
+      PILOT_A,
+      'aaaaaaaa-eeee-1111-1111-700000099991',
+      ADMIN_A,
+    ]
+  );
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_authorizations '
+        + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+        + "VALUES ($1, $2, $3, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+      [PILOT_A, 'aaaaaaaa-dddd-1111-1111-800000099991', ADMIN_A]
+    ),
+    /self-authorization forbidden/i
+  );
+});
+
+test('real-schema: governance_execution_authorizations INSERT — authorizing a rejected review is rejected by trigger', async () => {
+  // DECISION_B is rejected (per fixture). admin2-B tries to authorize it.
+  const c = await setup();
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_authorizations '
+        + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+        + "VALUES ($1, $2, $3, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+      [PILOT_B, 'bbbbbbbb-dddd-2222-2222-800000000001', ADMIN2_B]
+    ),
+    /non-approved review|review_outcome/i
+  );
+});
+
+test('real-schema: governance_execution_authorizations INSERT — scope mismatch rejected by trigger', async () => {
+  // DECISION_A_2's underlying intent is memory.candidate.create.
+  // Try to authorize it with a non-matching scope. Use a fresh
+  // unauthorized approved decision (DECISION_A_2 already has AUTH_A).
+  const c = await setup();
+  await c.query(
+    'INSERT INTO governance_review_queue '
+      + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
+      + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
+    ['aaaaaaaa-eeee-1111-1111-700000099992', PILOT_A, SENIOR_A]
+  );
+  await c.query(
+    'INSERT INTO governance_review_decisions '
+      + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
+    [
+      'aaaaaaaa-dddd-1111-1111-800000099992',
+      PILOT_A,
+      'aaaaaaaa-eeee-1111-1111-700000099992',
+      ADMIN_A,
+    ]
+  );
+  // Now try to authorize with the wrong scope.
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_authorizations '
+        + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+        + "VALUES ($1, $2, $3, 'admin', 'future_vault_action', 'admin_explicit_authorization')",
+      [PILOT_A, 'aaaaaaaa-dddd-1111-1111-800000099992', ADMIN2_A]
+    ),
+    /does not match intent type/i
+  );
+});
+
+test('real-schema: governance_execution_authorizations INSERT — duplicate authorization for same review_decision rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN2_A, userRole: 'admin',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_authorizations '
+          + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+          + "VALUES ($1, $2, $3, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+        [PILOT_A, DECISION_A_2, ADMIN2_A]
+      ),
+      /duplicate key|unique/i
+    );
+  });
+});
+
+test('real-schema: governance_execution_authorizations append-only — UPDATE raises', async () => {
+  const c = await setup();
+  await assert.rejects(
+    () => c.query("UPDATE governance_execution_authorizations SET authorization_reason = 'admin_explicit_authorization' WHERE id = $1", [AUTH_A]),
+    /append.only/i
+  );
+});
+
+test('real-schema: governance_execution_authorizations append-only — DELETE raises', async () => {
+  const c = await setup();
+  await assert.rejects(
+    () => c.query('DELETE FROM governance_execution_authorizations WHERE id = $1', [AUTH_A]),
+    /append.only/i
+  );
+});

@@ -56,6 +56,11 @@ const REASONS = Object.freeze({
   // so the review-decision actor has a Decision to verify. The
   // actor enforces admin-only role; the classifier is stateless.
   REVIEW_DECISION_RECORDING_PERMITTED: 'review_decision_recording_permitted',
+  // GM-25: the classifier admits GOVERNANCE_EXECUTION_AUTHORIZE
+  // intents so the execution-authorization actor has a Decision
+  // to verify. Same posture as GM-24 — role + data preconditions
+  // are enforced at the actor + DB trigger, not in the classifier.
+  EXECUTION_AUTHORIZATION_RECORDING_PERMITTED: 'execution_authorization_recording_permitted',
 });
 
 const ALL_REASONS = new Set(Object.values(REASONS));
@@ -88,6 +93,8 @@ const POLICY_REFS = Object.freeze({
     'governance-runtime-boundary.md §3 (default-deny)',
   [REASONS.REVIEW_DECISION_RECORDING_PERMITTED]:
     'review-decision-runtime-boundary.md §3',
+  [REASONS.EXECUTION_AUTHORIZATION_RECORDING_PERMITTED]:
+    'execution-authorization-runtime-boundary.md §3',
 });
 
 // Module-private token. External code cannot reach this Symbol —
