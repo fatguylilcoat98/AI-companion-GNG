@@ -15,11 +15,15 @@ contract behind every rule here lives in
 
 **What the runtime does today**
 
-- Parses environment variables for feature flags and connection
-  details.
-- (Layer-1 on) Connects to Postgres with bounded retry / backoff.
-- Resolves the single pilot instance, reads the four configuration
-  tables, validates the companion configuration.
+- Parses environment variables for feature flags, the pilot identity,
+  and the runtime DB connection string.
+- (Layer-1 on) Connects to Postgres as the `lylo_runtime` LOGIN role
+  (GM-16); RLS engagement is intrinsic to that connection.
+- Binds `LYLO_PILOT_INSTANCE_ID` to the loader's transaction via
+  `set_config('app.pilot_instance_id', ..., true)` so tenant-scope
+  RLS narrows every config-table SELECT.
+- Reads the four configuration tables, validates the companion
+  configuration.
 - Derives one of five runtime states.
 - Serves `/healthz`, `/readyz`, `/status` over plain HTTP.
 
@@ -40,7 +44,7 @@ for the `ready` ⇄ `degraded` pair, which auto-recovers.
 |---|---|---|---|---|
 | `inert` | 200 | 503 | `LYLO_SHELL_MODE` unset or `false` | Set `LYLO_SHELL_MODE=true` and restart |
 | `setup-incomplete` | 200 | 503 | Layer-1 on; `companion_profile` absent or with blank identity, or `supported_person_profile` absent | Run `scripts/setup/provision-instance.js` (see `../setup/provisioning-contract.md`). A richer iterative wizard remains a future GM. |
-| `configuration-invalid` | 200 | 503 | Env malformed; DB unreachable after 4 attempts; pilot resolution failed; `companion_profile` structurally invalid | Diagnose with the log events (section 6 + section 9); fix; restart |
+| `configuration-invalid` | 200 | 503 | Env malformed (missing/bad `LYLO_RUNTIME_DATABASE_URL` or `LYLO_PILOT_INSTANCE_ID`); DB unreachable after 4 attempts; `LYLO_PILOT_INSTANCE_ID` does not match any `pilot_instances` row; `companion_profile` structurally invalid | Diagnose with the log events (section 6 + section 9); fix; restart |
 | `ready` | 200 | 200 | Config deployed-valid + supported-person present + DB reachable | No action; healthy |
 | `degraded` | 200 | 503 | Was `ready`; the periodic DB ping failed | No action — auto-recovers to `ready` when the DB returns |
 
@@ -97,7 +101,6 @@ return JSON with `Content-Type: application/json` and a 10 second
   "version": "0.0.0",
   "flags": {
     "masterSwitch": true,
-    "rlsEnforced": false,
     "setupModeEnabled": false,
     "voiceEnabled": false,
     "legacyProjectModeEnabled": false
@@ -177,7 +180,7 @@ connection string.
 | `boot.env.error` | warn | `message` | An environment variable failed to parse (one per error). | Fix the env value (section 8); restart. |
 | `boot.inert` | info | — | Layer-1 master switch is off; the runtime is inert. | Set `LYLO_SHELL_MODE=true` if you intended to serve. |
 | `boot.db.unreachable` | error | `attempts` | DB connect exhausted retries. | Check Postgres host/port, credentials, network. |
-| `boot.pilot.resolution_failed` | error | `reason` | Zero or multiple `pilot_instances` rows, or `PILOT_INSTANCE_ID` mismatch. | Inspect `pilot_instances`; ensure exactly one row; verify the env value if pinned. |
+| `boot.pilot.resolution_failed` | error | `reason` | `LYLO_PILOT_INSTANCE_ID` does not match any `pilot_instances` row, or the loader could not bind it. | Verify the env value matches a row in `pilot_instances`. After provisioning, the new UUID appears in the `setup.pilot.created` log line. |
 | `boot.config.invalid` | error | — | `companion_profile` row exists but the reassembled config is structurally invalid. | Re-seed `companion_profile` from the blank-template shape (`config/companion.example.json`). |
 | `boot.config.load_failed` | error | — | A DB query threw during config load. | Check Postgres health and the schema migrations. |
 | `boot.state` | info | `state` | The boot-time runtime state. | None if `ready`; otherwise see the state-specific row in section 2. |
@@ -221,39 +224,74 @@ npm ci
 
 ### Environment
 
-Required:
+The runtime and the provisioning script use **separate, role-restricted
+connection strings** (GM-16). The connecting LOGIN role's effective
+identity determines what RLS lets the process see and write — see
+`../governance/rls-privacy-contract.md`.
 
-- `DATABASE_URL` — Postgres connection string. Use a placeholder
-  pattern such as `postgres://USER:PASSWORD@HOST:5432/DB`. The value
-  is read as an opaque string and never logged.
+#### Required environment variables
 
-Layer-1 master switch:
+| Variable | Used by | Notes |
+|---|---|---|
+| `LYLO_RUNTIME_DATABASE_URL` | Runtime | Connection string for a LOGIN role whose effective identity is `lylo_runtime` (SELECT on the four config tables only). Opaque string; never logged. |
+| `LYLO_SETUP_DATABASE_URL` | Provisioning script | Connection string for a LOGIN role whose effective identity is `lylo_setup` (BYPASSRLS; INSERT/SELECT on the config tables + `users`). Opaque string; never logged. |
+| `LYLO_PILOT_INSTANCE_ID` | Runtime | UUID of the pilot this process serves. Set on `app.pilot_instance_id` inside every loader transaction so tenant-scoped RLS narrows reads. Required; missing or non-UUID values yield `configuration-invalid`. |
+| `LYLO_SHELL_MODE` | Runtime | `true` to mount the runtime; `false` (default) is `inert`. |
 
-- `LYLO_SHELL_MODE` — `true` to mount the runtime; default `false`
-  (inert).
+#### Optional environment variables
 
-Optional:
+| Variable | Used by | Notes |
+|---|---|---|
+| `PORT` | Runtime | Health server port; default `3000`. An invalid value yields `configuration-invalid`. |
+| `LYLO_VERSION` | Runtime | Build version override surfaced in `/status`. When unset, the runtime uses `package.json#version`. |
+| `SETUP_MODE_ENABLED`, `VOICE_ENABLED`, `LEGACY_PROJECT_MODE_ENABLED` | Runtime | Layer-3 capability sub-flags; defaults `false`. |
 
-- `PORT` — health server port; default `3000`. An invalid value yields
-  `configuration-invalid`.
-- `PILOT_INSTANCE_ID` — when set, must match the single
-  `pilot_instances` row; mismatch yields `configuration-invalid`.
-- `LYLO_VERSION` — build version override surfaced in `/status`. When
-  unset, the runtime uses `package.json#version`.
-- `RLS_ENFORCED` — Layer-2; independent of Layer-1; default `false`.
-- `SETUP_MODE_ENABLED`, `VOICE_ENABLED`,
-  `LEGACY_PROJECT_MODE_ENABLED` — Layer-3 capability sub-flags;
-  defaults `false`.
+#### Migrating from pre-GM-16 environment variables
+
+GM-16 renamed three variables. There is no fallback (OQ-16.2).
+
+| Old name | New name |
+|---|---|
+| `DATABASE_URL` | `LYLO_RUNTIME_DATABASE_URL` (runtime) and `LYLO_SETUP_DATABASE_URL` (provisioning) — they are deliberately distinct |
+| `PILOT_INSTANCE_ID` | `LYLO_PILOT_INSTANCE_ID` (now **required** and UUID-validated) |
+| `RLS_ENFORCED` | **Removed.** RLS engagement is now intrinsic to the connection role; no runtime toggle. |
+
+A boot that supplies only the pre-GM-16 names yields
+`configuration-invalid` with `boot.env.error` entries pointing at the
+new names.
+
+#### LOGIN role provisioning
+
+Operators create the LOGIN roles once per cluster, after applying
+migrations 001–007:
+
+```sql
+CREATE ROLE lylo_runtime_login LOGIN PASSWORD '...' IN ROLE lylo_runtime;
+CREATE ROLE lylo_setup_login   LOGIN PASSWORD '...' IN ROLE lylo_setup;
+ALTER ROLE  lylo_setup_login   BYPASSRLS;
+```
+
+The base roles `lylo_runtime` / `lylo_setup` are created by
+`db/migrations/007_rls_policies.sql`. The LOGIN roles inherit table
+grants via `IN ROLE`, but a critical Postgres detail applies:
+**`BYPASSRLS` is a role attribute that does not propagate through role
+membership**. The provisioning LOGIN role must carry `BYPASSRLS`
+itself; without it the bootstrap INSERTs hit RLS default-deny and
+fail. The runtime LOGIN role does **not** get `BYPASSRLS` — it must
+remain subject to RLS.
+
+Passwords are operator-owned secrets; the runtime and the provisioning
+script never log them.
 
 ### Provision the instance (first-time setup)
 
 A fresh instance database needs the four configuration rows seeded
 before the runtime can reach `ready`. Fill an answers file (start from
 `config/answers.example.json`) and run the offline provisioning
-script:
+script, connecting as `lylo_setup`:
 
 ```sh
-DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DB' \
+LYLO_SETUP_DATABASE_URL='postgres://lylo_setup_login:PASSWORD@HOST:5432/DB' \
 node scripts/setup/provision-instance.js --answers ./answers.json
 ```
 
@@ -263,11 +301,15 @@ against the same database. See
 `../setup/provisioning-contract.md` for the contract, idempotency
 rules, and event catalog.
 
+The `setup.pilot.created` log line includes the new pilot's UUID — pin
+that value on `LYLO_PILOT_INSTANCE_ID` for the runtime.
+
 ### Run
 
 ```sh
 LYLO_SHELL_MODE=true \
-DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DB' \
+LYLO_RUNTIME_DATABASE_URL='postgres://lylo_runtime_login:PASSWORD@HOST:5432/DB' \
+LYLO_PILOT_INSTANCE_ID='<pilot-uuid-from-provisioning>' \
 npm start
 ```
 
@@ -276,7 +318,8 @@ human reading:
 
 ```sh
 LYLO_SHELL_MODE=true \
-DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DB' \
+LYLO_RUNTIME_DATABASE_URL='postgres://lylo_runtime_login:PASSWORD@HOST:5432/DB' \
+LYLO_PILOT_INSTANCE_ID='<pilot-uuid>' \
 npm start | jq
 ```
 
@@ -296,11 +339,25 @@ Unit tests (no database):
 npm test
 ```
 
-Integration tests (require a throwaway Postgres). Run files serially —
-each `before` hook resets the schema, so concurrent files would race:
+Integration tests (require a throwaway Postgres). The tests use three
+connection strings (OQ-16.6): the bootstrap superuser for schema
+reset, and the two LOGIN roles for the application paths. Run files
+serially — each `before` hook resets the schema, so concurrent files
+would race:
 
 ```sh
-DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DB' \
+# After applying migrations 001-007, create the LOGIN roles once.
+# BYPASSRLS does not inherit through IN ROLE — the setup LOGIN role
+# carries it directly.
+psql "$DATABASE_URL" -c "
+  CREATE ROLE lylo_runtime_login LOGIN PASSWORD 'test' IN ROLE lylo_runtime;
+  CREATE ROLE lylo_setup_login   LOGIN PASSWORD 'test' IN ROLE lylo_setup;
+  ALTER ROLE  lylo_setup_login   BYPASSRLS;
+"
+
+DATABASE_URL='postgres://postgres:postgres@HOST:5432/DB' \
+LYLO_RUNTIME_DATABASE_URL='postgres://lylo_runtime_login:test@HOST:5432/DB' \
+LYLO_SETUP_DATABASE_URL='postgres://lylo_setup_login:test@HOST:5432/DB' \
 node --test --test-concurrency=1 tests/integration/*.test.js
 ```
 
@@ -323,11 +380,9 @@ npm ci && node scripts/ci/check-config-schema.js
 
 | Event you saw | Likely cause | What to check |
 |---|---|---|
-| `boot.env.error` | Bad env value (e.g. non-integer `PORT`, missing `DATABASE_URL`) | Fix the env value; restart. |
-| `boot.db.unreachable` | Postgres unreachable after four attempts (1 + 2 + 4 + 8 s backoff) | `pg_isready -h HOST`; firewall and routing; restart Postgres; restart the runtime. |
-| `boot.pilot.resolution_failed`, reason `no pilot_instances row exists` | Database is not initialized | Apply migrations; insert exactly one `pilot_instances` row. |
-| `boot.pilot.resolution_failed`, reason `expected exactly one pilot_instances row, found N` | Single-tenant invariant violated | Reduce to one pilot row; restart. |
-| `boot.pilot.resolution_failed`, reason mentioning `PILOT_INSTANCE_ID` | Env pin does not match the DB row | Update the env value or the DB row to match; restart. |
+| `boot.env.error` | Bad env value (missing `LYLO_RUNTIME_DATABASE_URL` or `LYLO_PILOT_INSTANCE_ID`; malformed UUID; non-integer `PORT`) | Fix the env value; restart. |
+| `boot.db.unreachable` | Postgres unreachable after four attempts (1 + 2 + 4 + 8 s backoff), or the `lylo_runtime` LOGIN role's authentication failed | `pg_isready -h HOST`; verify the `LYLO_RUNTIME_DATABASE_URL` credentials; confirm the `lylo_runtime_login` role exists; restart. |
+| `boot.pilot.resolution_failed` | `LYLO_PILOT_INSTANCE_ID` does not match any `pilot_instances` row | Verify the env value against the seeded pilot — the `setup.pilot.created` line from provisioning carries the UUID. |
 | `boot.config.invalid` | The `companion_profile` JSONB columns are not a structurally complete configuration | Re-seed using the blank-template shape from `config/companion.example.json`. |
 | `boot.config.load_failed` | A DB query threw during load | Inspect Postgres logs; verify the schema is at the expected migrations. |
 
@@ -378,10 +433,9 @@ later GMs:
   behind the RLS contract suite port and subsequent memory-governance
   extraction.
 - **Memory governance runtime** — `memory_store`, vaults, and the
-  audit log are schema-present but runtime-absent. Blocked until the
-  RLS / privacy contract suite is ported and passing.
-- **RLS policies** — the schema is RLS-ready; no policies exist. The
-  locked contract is `tests/rls-contract/` once that port lands.
+  audit log are schema-present and RLS-protected; the runtime does
+  not yet read or write them. Future GM milestones add a separate
+  `lylo_app` LOGIN role and the application code that uses it.
 - **Deployment automation** — Render / Supabase configuration is
   intentionally absent at this stage; local Postgres only.
 

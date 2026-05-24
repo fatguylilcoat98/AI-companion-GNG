@@ -140,9 +140,44 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm ci
+      - name: Apply migrations and create LOGIN roles (GM-16)
+        # The integration tests use three connection strings (OQ-16.6):
+        #   - DATABASE_URL: bootstrap superuser; resets schema and seeds
+        #     fixtures.
+        #   - LYLO_RUNTIME_DATABASE_URL: lylo_runtime_login LOGIN role,
+        #     IN ROLE lylo_runtime; what boot() uses.
+        #   - LYLO_SETUP_DATABASE_URL: lylo_setup_login LOGIN role,
+        #     IN ROLE lylo_setup; what the provisioning script uses.
+        # Migrations are applied here so the lylo_* base roles exist
+        # before we create the LOGIN roles that depend on them. Test
+        # files re-apply migrations in their own `before` hooks; the
+        # DO/IF EXISTS idempotency in 007 makes that safe.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for f in db/migrations/0*.sql; do
+            psql -h localhost -U postgres -d lylo_test -v ON_ERROR_STOP=1 -f "$f"
+          done
+          # Note on BYPASSRLS: in Postgres, BYPASSRLS is a role
+          # attribute that does NOT inherit via role membership. The
+          # LOGIN role that gates the provisioning process must carry
+          # BYPASSRLS itself, not just inherit grants from the base
+          # lylo_setup role. Without it, the seeding INSERTs hit RLS
+          # default-deny and fail.
+          psql -h localhost -U postgres -d lylo_test -v ON_ERROR_STOP=1 -c "
+            DO \$\$ BEGIN
+              CREATE ROLE lylo_runtime_login LOGIN PASSWORD 'test' IN ROLE lylo_runtime;
+            EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;
+            DO \$\$ BEGIN
+              CREATE ROLE lylo_setup_login LOGIN PASSWORD 'test' IN ROLE lylo_setup;
+            EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;
+            ALTER ROLE lylo_setup_login BYPASSRLS;
+          "
       - name: Run integration tests
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/lylo_test
+          LYLO_RUNTIME_DATABASE_URL: postgres://lylo_runtime_login:test@localhost:5432/lylo_test
+          LYLO_SETUP_DATABASE_URL: postgres://lylo_setup_login:test@localhost:5432/lylo_test
         # Serial file execution: each test file's `before` hook resets
         # the schema, so files must not race on the same database.
         run: node --test --test-concurrency=1 tests/integration/*.test.js

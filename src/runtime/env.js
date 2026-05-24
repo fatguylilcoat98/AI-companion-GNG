@@ -4,23 +4,25 @@
  *
  * Pure: reads a raw environment object and returns a typed result. It
  * performs no I/O — no database connection, no network. It only reads
- * strings. DATABASE_URL is read as an opaque string; this module never
- * connects to anything.
+ * strings. LYLO_RUNTIME_DATABASE_URL is read as an opaque string; this
+ * module never connects to anything.
  *
  * Fail-closed: a missing or unparseable required variable is reported
- * as an error. The GM-7b boot sequence treats a non-ok result as fatal.
+ * as an error. The boot sequence treats a non-ok result as fatal.
  *
- * Feature flags follow the three-layer model in
- * docs/governance/feature-flag-model.md. Every flag defaults to false —
- * a copied instance never inherits a "live" flag state.
+ * GM-16 wired the runtime onto the `lylo_runtime` DB role and made
+ * env-first pilot identity required. The previous `DATABASE_URL` and
+ * `PILOT_INSTANCE_ID` variable names are not accepted — see the
+ * operator runbook for the migration.
  */
 
 // Environment variable -> result key. Layer 1 is the master switch;
-// Layer 2 (RLS enforcement) is independent of Layer 1; Layer 3 are
-// capability sub-flags.
+// Layer 3 are capability sub-flags. The historical Layer-2 RLS_ENFORCED
+// flag is gone — RLS engagement is now intrinsic to the connection role
+// (see docs/governance/feature-flag-model.md and
+// docs/governance/rls-privacy-contract.md).
 const BOOLEAN_FLAGS = Object.freeze({
   LYLO_SHELL_MODE: 'masterSwitch',
-  RLS_ENFORCED: 'rlsEnforced',
   SETUP_MODE_ENABLED: 'setupModeEnabled',
   VOICE_ENABLED: 'voiceEnabled',
   LEGACY_PROJECT_MODE_ENABLED: 'legacyProjectModeEnabled',
@@ -31,6 +33,10 @@ const FALSE_VALUES = new Set(['false', '0', '']);
 
 // Health/readiness server port. Defaults to 3000 when PORT is unset.
 const DEFAULT_PORT = 3000;
+
+// Canonical RFC 4122 textual UUID, case-insensitive. Postgres accepts
+// the same shape for the uuid type.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function parseBoolean(raw) {
   if (raw === undefined || raw === null) return { value: false, error: null };
@@ -61,7 +67,8 @@ function parsePort(raw) {
  *   rawEnv - an object of environment variables (the caller passes
  *            process.env; tests pass a literal)
  *
- * Returns { ok, errors, flags, databaseUrl, pilotInstanceId }.
+ * Returns { ok, errors, flags, runtimeDatabaseUrl, pilotInstanceId,
+ *           port, version }.
  */
 function parseEnv(rawEnv) {
   const env = rawEnv || {};
@@ -74,18 +81,31 @@ function parseEnv(rawEnv) {
     flags[key] = value;
   }
 
-  // Database connection string. Required for the runtime to load
-  // configuration. Read as an opaque string only.
-  const databaseUrl = env.DATABASE_URL ? String(env.DATABASE_URL).trim() : '';
-  if (!databaseUrl) {
-    errors.push('DATABASE_URL: required, but missing or empty');
+  // Runtime database connection string. Required for the runtime to
+  // load configuration. Read as an opaque string only; the connecting
+  // identity must resolve to the `lylo_runtime` DB role.
+  const runtimeDatabaseUrl = env.LYLO_RUNTIME_DATABASE_URL
+    ? String(env.LYLO_RUNTIME_DATABASE_URL).trim()
+    : '';
+  if (!runtimeDatabaseUrl) {
+    errors.push('LYLO_RUNTIME_DATABASE_URL: required, but missing or empty');
   }
 
-  // Optional pilot pin. When present it must later match the single
-  // pilot_instances row; that cross-check is the loader's job.
-  const pilotInstanceId = env.PILOT_INSTANCE_ID
-    ? String(env.PILOT_INSTANCE_ID).trim()
-    : null;
+  // Pilot identity. GM-16 makes this required and UUID-validated;
+  // the loader sets app.pilot_instance_id from it before any query so
+  // tenant-scoped RLS policies can take effect. The historical
+  // PILOT_INSTANCE_ID name is gone.
+  const rawPilot = env.LYLO_PILOT_INSTANCE_ID
+    ? String(env.LYLO_PILOT_INSTANCE_ID).trim()
+    : '';
+  let pilotInstanceId = null;
+  if (!rawPilot) {
+    errors.push('LYLO_PILOT_INSTANCE_ID: required, but missing or empty');
+  } else if (!UUID_RE.test(rawPilot)) {
+    errors.push(`LYLO_PILOT_INSTANCE_ID: expected a UUID, got "${rawPilot}"`);
+  } else {
+    pilotInstanceId = rawPilot.toLowerCase();
+  }
 
   // Optional build version override. When absent, boot falls back to
   // package.json#version.
@@ -100,11 +120,11 @@ function parseEnv(rawEnv) {
     ok: errors.length === 0,
     errors,
     flags,
-    databaseUrl,
+    runtimeDatabaseUrl,
     pilotInstanceId,
     port,
     version,
   };
 }
 
-module.exports = { parseEnv, parsePort, BOOLEAN_FLAGS, DEFAULT_PORT };
+module.exports = { parseEnv, parsePort, BOOLEAN_FLAGS, DEFAULT_PORT, UUID_RE };

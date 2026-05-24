@@ -9,6 +9,13 @@
  * The loader never touches memory_store, memory_vaults,
  * memory_vault_sessions, governance_audit_log, or any conversation /
  * inference table. The four tables below are its entire read surface.
+ *
+ * GM-16 wired the loader to the `lylo_runtime` DB role and made the
+ * pilot identity env-first: the caller passes the UUID parsed from
+ * LYLO_PILOT_INSTANCE_ID, the loader sets app.pilot_instance_id via
+ * set_config inside the transaction so tenant-scope RLS narrows every
+ * subsequent SELECT, and a single presence check confirms the pilot
+ * row exists before the config reads run.
  */
 
 const { loadSchema } = require('../../scripts/validate/validate-companion-config');
@@ -17,29 +24,6 @@ const { loadSchema } = require('../../scripts/validate/validate-companion-config
 // It is injected on reassembly — companion_profile does not store it
 // (see docs/governance/companion-config-contract.md section 9).
 const CONTRACT_VERSION = loadSchema().properties.schema_version.const;
-
-/*
- * Decide the pilot from the pilot_instances ids and an optional env
- * pin. Pure — unit-testable without a database.
- *
- * Returns { ok: true, pilotInstanceId } or { ok: false, reason }.
- */
-function resolvePilotFrom(ids, envPilotId) {
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return { ok: false, reason: 'no pilot_instances row exists' };
-  }
-  if (ids.length > 1) {
-    return {
-      ok: false,
-      reason: `expected exactly one pilot_instances row, found ${ids.length}`,
-    };
-  }
-  const pilotInstanceId = ids[0];
-  if (envPilotId && envPilotId !== pilotInstanceId) {
-    return { ok: false, reason: 'PILOT_INSTANCE_ID does not match the pilot_instances row' };
-  }
-  return { ok: true, pilotInstanceId };
-}
 
 /*
  * Reassemble a companion_profile row into a configuration object.
@@ -60,48 +44,77 @@ function reassembleConfig(row) {
 
 /*
  * Load the runtime configuration. Opens a READ ONLY transaction on a
- * dedicated client, runs the four SELECT queries, and returns:
+ * dedicated client, binds the pilot identity to the transaction's
+ * app.pilot_instance_id session variable so tenant-scoped RLS policies
+ * narrow every SELECT, verifies the pilot row exists, then runs the
+ * four config SELECTs.
+ *
+ *   pool    - the pg pool
+ *   options - { pilotInstanceId } — the UUID parsed from
+ *             LYLO_PILOT_INSTANCE_ID by parseEnv; required.
+ *
+ * Returns:
  *   { ok, pilotInstanceId, reason, config, supportedPersonPresent,
  *     setupState }
  * `ok` is false only for a pilot-resolution failure.
  */
 async function loadRuntimeConfig(pool, options) {
   const opts = options || {};
-  const envPilotId = opts.envPilotId || null;
+  const pilotInstanceId = opts.pilotInstanceId || null;
+  if (!pilotInstanceId) {
+    return { ok: false, reason: 'LYLO_PILOT_INSTANCE_ID is required' };
+  }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN READ ONLY');
 
-    const pilotRows = await client.query('SELECT id FROM pilot_instances');
-    const pilot = resolvePilotFrom(pilotRows.rows.map((r) => r.id), envPilotId);
-    if (!pilot.ok) {
-      await client.query('COMMIT');
-      return { ok: false, reason: pilot.reason };
-    }
+    // Bind the pilot identity to the transaction. set_config(name,
+    // value, is_local=true) is the parameter-safe equivalent of
+    // `SET LOCAL`; it reverts at COMMIT/ROLLBACK and never escapes the
+    // transaction. Every subsequent SELECT in this transaction is
+    // narrowed by the tenant-scope RLS policy that reads
+    // current_setting('app.pilot_instance_id', true).
+    await client.query('SELECT set_config($1, $2, true)', [
+      'app.pilot_instance_id',
+      pilotInstanceId,
+    ]);
 
-    const pid = pilot.pilotInstanceId;
+    // Presence check. Under lylo_runtime's bootstrap policy this
+    // SELECT can see all pilot_instances rows, so a 0-row result here
+    // is an unambiguous "no such pilot" (not "tenant-scope hid it").
+    const presence = await client.query(
+      'SELECT 1 FROM pilot_instances WHERE id = $1',
+      [pilotInstanceId]
+    );
+    if (presence.rowCount === 0) {
+      await client.query('COMMIT');
+      return {
+        ok: false,
+        reason: 'LYLO_PILOT_INSTANCE_ID does not match any pilot_instances row',
+      };
+    }
 
     const companionRes = await client.query(
       'SELECT companion_name, persona, voice, safety FROM companion_profile WHERE pilot_instance_id = $1',
-      [pid]
+      [pilotInstanceId]
     );
     const supportedRes = await client.query(
       'SELECT display_name, timezone, locale, preferences FROM supported_person_profile WHERE pilot_instance_id = $1',
-      [pid]
+      [pilotInstanceId]
     );
     // setup_state is read for diagnostics only — it never decides the
     // runtime state. The loader's validation is authoritative.
     const setupRes = await client.query(
       'SELECT step_key, status FROM setup_state WHERE pilot_instance_id = $1',
-      [pid]
+      [pilotInstanceId]
     );
 
     await client.query('COMMIT');
 
     return {
       ok: true,
-      pilotInstanceId: pid,
+      pilotInstanceId,
       config: reassembleConfig(companionRes.rows[0] || null),
       supportedPersonPresent: supportedRes.rows.length > 0,
       setupState: setupRes.rows,
@@ -120,7 +133,6 @@ async function loadRuntimeConfig(pool, options) {
 
 module.exports = {
   loadRuntimeConfig,
-  resolvePilotFrom,
   reassembleConfig,
   CONTRACT_VERSION,
 };

@@ -32,16 +32,31 @@ What this release candidate is **not** — see "Deferred" below.
 ## End-to-end rehearsal (from a fresh database)
 
 ```sh
-# 1. Apply migrations to a fresh database
+# 1. Apply migrations to a fresh database (bootstrap superuser)
 for f in db/migrations/0*.sql; do
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+  psql "$BOOTSTRAP_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
 done
 
-# 2. Provision (fill answers.json from config/answers.example.json)
-node scripts/setup/provision-instance.js --answers ./answers.json
+# 2. Create the LOGIN roles (one-time, see operator-runbook.md §8).
+#    BYPASSRLS does not inherit through IN ROLE — the setup LOGIN role
+#    carries it directly.
+psql "$BOOTSTRAP_DATABASE_URL" -c "
+  CREATE ROLE lylo_runtime_login LOGIN PASSWORD '...' IN ROLE lylo_runtime;
+  CREATE ROLE lylo_setup_login   LOGIN PASSWORD '...' IN ROLE lylo_setup;
+  ALTER ROLE  lylo_setup_login   BYPASSRLS;
+"
 
-# 3. Boot
-LYLO_SHELL_MODE=true npm start
+# 3. Provision (fill answers.json from config/answers.example.json) as lylo_setup
+LYLO_SETUP_DATABASE_URL='postgres://lylo_setup_login:.../...' \
+node scripts/setup/provision-instance.js --answers ./answers.json
+# The setup.pilot.created log line carries the new pilot's UUID — pin
+# it on LYLO_PILOT_INSTANCE_ID for step 4.
+
+# 4. Boot as lylo_runtime, env-first pilot identity
+LYLO_SHELL_MODE=true \
+LYLO_RUNTIME_DATABASE_URL='postgres://lylo_runtime_login:.../...' \
+LYLO_PILOT_INSTANCE_ID='<pilot-uuid-from-step-3>' \
+npm start
 ```
 
 Observed result of the rehearsal against the merged `main` (`6be23dc`):
@@ -92,7 +107,8 @@ Eleven baseline CI jobs gate every PR:
 | Offline provisioning script (GM-12) | One-shot, atomic, idempotent, paper-trail | `setup/provisioning-contract.md` |
 | Shutdown events + version in `/status` (GM-13) | Landed | `deployment/operator-runbook.md` §3, §4, §6 |
 | Synthetic RLS / privacy contract (GM-14) | Landed; CI-enforced | `governance/rls-privacy-contract.md` |
-| Real-schema RLS migration + `lylo_*` roles (GM-15) | Landed; **dormant in production until GM-16 connection wire-up** | `db/migrations/007_rls_policies.sql`, `governance/rls-privacy-contract.md` §"Runtime wire-up status" |
+| Real-schema RLS migration + `lylo_*` roles (GM-15) | Landed | `db/migrations/007_rls_policies.sql`, `governance/rls-privacy-contract.md` §"Runtime wire-up status" |
+| RLS-engaged runtime + provisioning connection roles (GM-16) | Landed; **RLS engaged in production** via `LYLO_RUNTIME_DATABASE_URL` (lylo_runtime) and `LYLO_SETUP_DATABASE_URL` (lylo_setup); pilot identity env-first via `LYLO_PILOT_INSTANCE_ID` | `deployment/operator-runbook.md` §8, `governance/rls-privacy-contract.md` §"Runtime wire-up status", `tests/integration/rls-engagement.test.js` |
 
 ## What is explicitly deferred
 
@@ -100,20 +116,11 @@ These items remain out of scope and are blocked behind their listed
 gates:
 
 - **Memory governance runtime** — `memory_store`, `memory_vaults`,
-  `memory_vault_sessions`, `governance_audit_log` are schema-present
-  and RLS-protected, but runtime-absent. **Gate:** GM-16 wires the
-  runtime to connect as `lylo_runtime` and the provisioning script as
-  `lylo_setup` before any code reads or writes these tables under
-  enforced RLS.
-- **Runtime / provisioning connection wire-up (GM-16)** — the
-  GM-15 migration installs policies and roles, but the runtime and
-  provisioning script still connect with the operator's `DATABASE_URL`
-  (typically a bootstrap superuser with `BYPASSRLS`). RLS therefore
-  exists on the schema but is dormant for the connecting application.
-  **Gate:** GM-16 introduces `LYLO_RUNTIME_DATABASE_URL` /
-  `LYLO_SETUP_DATABASE_URL`, env-first pilot-id resolution via
-  `LYLO_PILOT_INSTANCE_ID` (OQ-15.2), `SET LOCAL app.*` per request,
-  and a real-role integration test.
+  `memory_vault_sessions`, `governance_audit_log` are schema-present,
+  RLS-protected, and structurally denied to `lylo_runtime` at the
+  GRANT layer. Reading or writing them requires a future `lylo_app`
+  LOGIN role and the application code that uses it. **Gate:** a
+  future GM milestone with explicit owner approval.
 - **Companion behavior** — conversation, inference, reminders.
   **Gate:** memory-governance runtime + the RLS contract.
 - **Setup Mode iterative wizard** — the one-shot provisioning script
@@ -141,11 +148,13 @@ matching observed behavior, and all hard limits held, the **runtime
 shell of the master template is deployment-ready as a release
 candidate**.
 
-The next dangerous step — the first one that crosses the runtime
-boundary — is the **GM-16 connection wire-up**: switching the runtime
-and provisioning script onto the `lylo_*` roles created by the GM-15
-migration, which engages the dormant RLS policies in production and
-unlocks memory-governance extraction.
+With GM-16 landed, the dormant GM-15 RLS policies are engaged in
+production via the `lylo_runtime` and `lylo_setup` LOGIN roles. The
+next dangerous step — the first one that **adds** to the runtime's
+read surface — is the **memory-governance runtime extraction**:
+introducing the `lylo_app` LOGIN role and the application code that
+reads / writes `memory_store`, the vault tables, and the audit log
+under the validated RLS policies.
 
 ## Cross-references
 

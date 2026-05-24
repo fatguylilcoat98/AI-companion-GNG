@@ -22,7 +22,13 @@
  *   ANSWERS_FILE=<path> node scripts/setup/provision-instance.js
  *   ... [--force]
  *
- * Reads DATABASE_URL from the environment, identically to the runtime.
+ * Reads LYLO_SETUP_DATABASE_URL from the environment. The connecting
+ * identity must resolve to the `lylo_setup` DB role (BYPASSRLS so the
+ * bootstrap inserts proceed; INSERT/SELECT on the four config tables
+ * + users; no grants on any memory table). This is a separate URL
+ * from the runtime's LYLO_RUNTIME_DATABASE_URL — same database,
+ * different LOGIN role, by design (see
+ * docs/governance/rls-privacy-contract.md).
  *
  * Logging is structured JSON-line (scripts/setup/log.js — a dedicated
  * sibling logger that mirrors the shape of src/runtime/log.js so log
@@ -224,12 +230,12 @@ async function main() {
   }
 
   // 3. Database connection.
-  const databaseUrl = process.env.DATABASE_URL || '';
-  if (!databaseUrl) {
-    logger.error('setup.env.error', { reason: 'DATABASE_URL is required' });
+  const setupDatabaseUrl = process.env.LYLO_SETUP_DATABASE_URL || '';
+  if (!setupDatabaseUrl) {
+    logger.error('setup.env.error', { reason: 'LYLO_SETUP_DATABASE_URL is required' });
     process.exit(1);
   }
-  const client = new Client({ connectionString: databaseUrl });
+  const client = new Client({ connectionString: setupDatabaseUrl });
   try {
     await client.connect();
   } catch (err) {
