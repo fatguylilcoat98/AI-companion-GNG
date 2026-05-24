@@ -141,7 +141,47 @@ The repository functions (`listVisibleMemories`,
 `insertPrivateMemory`) and the internal audit helper
 (`insertAuditEvent`) are NOT re-exported from `src/memory/index.js`.
 The only entry points callers should `require` are
-`createMemoryPool`, `closeMemoryPool`, and `withMemoryContext`.
+`createMemoryPool`, `closeMemoryPool`, `withMemoryContext`, and
+`MemoryRepositoryError`.
+
+## 5a. GM-18 hardening (no surface expansion)
+
+GM-18 tightened the GM-17 API along four axes without adding any new
+operation:
+
+| Hardening | Where | Why |
+|---|---|---|
+| **Opaque pool handle** (OQ-18.1) | `client.js` returns a `MemoryPoolHandle`; the real `pg.Pool` is held in a module-scoped `WeakMap`. `_resolvePool` (internal) is the only path back to the pool. | Closes the seam where a caller outside `src/memory/` could `createMemoryPool(...).connect()` and bypass audit-bundling. Callers see no `.connect`, no `.query`, no `.end`; the handle is `Object.freeze`d so monkey-patching is rejected. |
+| **`MemoryRepositoryError` sanitization** (OQ-18.2) | `transaction.js` wraps any pg-shaped error (5-char `SQLSTATE` in `err.code`) thrown inside the `fn(ctx)` callback. The wrapper carries only `name='MemoryRepositoryError'`, `error_class` (the SQLSTATE), and a fixed `message='memory operation failed'`. | pg's `err.detail` can echo the offending row's column values (memory `content`, in particular) for constraint failures; `err.message` can include bound parameter values. A caller's blind `logger.error(err)` would otherwise leak content. Caller-contract validation errors (UUID/role/content empty) pass through unchanged (OQ-18.7) because they carry no user data. |
+| **Audit `eventType` lock** (OQ-18.3) | `audit.js`'s `insertAuditEvent` validates `eventType` against `Object.values(EVENT_TYPES)`; the schema's `event_type` column is freeform TEXT, so this is the only place the vocabulary is mechanically pinned. | Prevents typos and unauthorized event types from polluting the audit log. Adding a new event type becomes a deliberate edit to the `EVENT_TYPES` constant — and, by §11 change-control, requires a paired update to this document. |
+| **Memory `content` byte cap** (OQ-18.4 / OQ-18.5) | `repository.js` defines `MAX_CONTENT_LENGTH = 65536` (64 KiB, UTF-8). `insertPrivateMemory` rejects longer content with `"content exceeds maximum length (N > 65536 bytes)"`. The message reports only the length and the limit — never the content. | Protects against DoS via oversized inserts, audit-log bloat, and slow `listVisibleMemories` pages. The byte (not character) measure is independent of UTF-8 expansion. |
+
+### Caller hygiene
+
+`listVisibleMemories` returns rows that include the `content` column.
+**Callers must not log result objects.** The memory module does not
+log content itself (the boundary doc rules above), but a caller's
+`logger.info('got memories', rows)` is outside the module's scope and
+would leak. Future companion-behavior callers must satisfy this by
+construction; review enforcement applies.
+
+### Re-export of `MemoryRepositoryError`
+
+`src/memory/index.js` re-exports the `MemoryRepositoryError` class so
+callers can pattern-match on it:
+
+```js
+const { withMemoryContext, MemoryRepositoryError } = require('./src/memory');
+try {
+  await withMemoryContext(handle, sessionCtx, async (ctx) => { /* ... */ });
+} catch (err) {
+  if (err instanceof MemoryRepositoryError) {
+    logger.error('memory.op.failed', { error_class: err.error_class });
+  } else {
+    throw err;  // caller-contract validation error — programmer bug
+  }
+}
+```
 
 ## 6. Boundary guard
 

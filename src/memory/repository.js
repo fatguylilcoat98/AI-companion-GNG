@@ -17,12 +17,15 @@
  *     admissibility_state='admissible'. §11 of
  *     docs/governance/source-of-truth-memory-policy.md: every new
  *     memory is created private; broader visibility is an
- *     audit-bundled UPDATE, not an INSERT-time option. Visibility
+ *     audit-bundled write, not an INSERT-time option. Visibility
  *     promotion is deferred (it needs UPDATE grants this PR does not
  *     add).
  *   - vault_id is forbidden in this surface — only password_locked
  *     memories ever carry it, and that visibility level is gated to a
  *     later GM.
+ *   - GM-18 (OQ-18.4 / OQ-18.5): content is capped at
+ *     MAX_CONTENT_LENGTH bytes (UTF-8). The rejection error reports
+ *     the length and the limit but does NOT echo the content.
  *   - Every op writes one audit row in the same transaction. If the
  *     audit INSERT throws, withMemoryContext ROLLBACKs both rows.
  */
@@ -30,6 +33,11 @@
 const { insertAuditEvent, EVENT_TYPES } = require('./audit');
 
 const VALID_PROVENANCE = new Set(['VERIFIED_FACT', 'USER_STATED', 'AI_INFERRED']);
+
+// Maximum content length, in UTF-8 bytes. Caps an individual memory at
+// 64 KiB — generous for any reasonable supported-person statement and
+// conservative against DoS via oversized inserts or audit-log bloat.
+const MAX_CONTENT_LENGTH = 65536;
 
 async function listVisibleMemories(client, sessionCtx, options) {
   const opts = options || {};
@@ -62,6 +70,15 @@ async function insertPrivateMemory(client, sessionCtx, input) {
   if (typeof content !== 'string' || content.trim() === '') {
     throw new Error('insertPrivateMemory: content must be a non-empty string');
   }
+  // Length check is in UTF-8 bytes (not JS code units) so the cap is
+  // independent of the script's encoding. The error message reports
+  // only the length and the limit — never the content.
+  const contentBytes = Buffer.byteLength(content, 'utf8');
+  if (contentBytes > MAX_CONTENT_LENGTH) {
+    throw new Error(
+      `insertPrivateMemory: content exceeds maximum length (${contentBytes} > ${MAX_CONTENT_LENGTH} bytes)`
+    );
+  }
   if (!VALID_PROVENANCE.has(provenance)) {
     throw new Error(
       `insertPrivateMemory: provenance must be one of ${Array.from(VALID_PROVENANCE).join(', ')}`
@@ -91,4 +108,9 @@ async function insertPrivateMemory(client, sessionCtx, input) {
   };
 }
 
-module.exports = { listVisibleMemories, insertPrivateMemory, VALID_PROVENANCE };
+module.exports = {
+  listVisibleMemories,
+  insertPrivateMemory,
+  VALID_PROVENANCE,
+  MAX_CONTENT_LENGTH,
+};

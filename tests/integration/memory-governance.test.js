@@ -419,3 +419,119 @@ test('memory-governance: lylo_app_login does NOT have BYPASSRLS — RLS is engag
     await su.end();
   }
 });
+
+// ---- GM-18 defense-in-depth: write-denial assertions on memory_store
+// and the append-only audit log under lylo_app_login (OQ-18.6) ----
+
+// Scenario 13.
+test('memory-governance (GM-18): lylo_app cannot UPDATE memory_store — denied at the GRANT layer', async () => {
+  // Seed a row under the bootstrap superuser so there is a row to
+  // attempt to update. The fixtures.sql seed in `before` already
+  // provides MEM_A_PRIVATE; we just attempt the UPDATE.
+  const raw = new Client({ connectionString: LYLO_APP_DATABASE_URL });
+  await raw.connect();
+  try {
+    await raw.query('BEGIN');
+    await raw.query('SELECT set_config($1, $2, true)', ['app.pilot_instance_id', PILOT_A]);
+    await raw.query('SELECT set_config($1, $2, true)', ['app.user_id', SENIOR_A]);
+    await raw.query('SELECT set_config($1, $2, true)', ['app.user_role', 'senior']);
+    await assert.rejects(
+      () =>
+        raw.query(
+          "UPDATE memory_store SET visibility_level = 'family_shared' WHERE id = $1",
+          [MEM_A_PRIVATE]
+        ),
+      /permission denied/i,
+      'lylo_app must be denied UPDATE on memory_store at the GRANT layer'
+    );
+    await raw.query('ROLLBACK');
+  } finally {
+    await raw.end();
+  }
+});
+
+// Scenario 14.
+test('memory-governance (GM-18): lylo_app cannot DELETE memory_store — denied at the GRANT layer', async () => {
+  const raw = new Client({ connectionString: LYLO_APP_DATABASE_URL });
+  await raw.connect();
+  try {
+    await raw.query('BEGIN');
+    await raw.query('SELECT set_config($1, $2, true)', ['app.pilot_instance_id', PILOT_A]);
+    await raw.query('SELECT set_config($1, $2, true)', ['app.user_id', SENIOR_A]);
+    await raw.query('SELECT set_config($1, $2, true)', ['app.user_role', 'senior']);
+    await assert.rejects(
+      () =>
+        raw.query('DELETE FROM memory_store WHERE id = $1', [MEM_A_PRIVATE]),
+      /permission denied/i,
+      'lylo_app must be denied DELETE on memory_store at the GRANT layer'
+    );
+    await raw.query('ROLLBACK');
+  } finally {
+    await raw.end();
+  }
+});
+
+// Scenario 15.
+test('memory-governance (GM-18): lylo_app cannot UPDATE governance_audit_log — denied at the GRANT layer (and the append-only trigger is a backstop)', async () => {
+  const raw = new Client({ connectionString: LYLO_APP_DATABASE_URL });
+  await raw.connect();
+  try {
+    await raw.query('BEGIN');
+    await raw.query('SELECT set_config($1, $2, true)', ['app.pilot_instance_id', PILOT_A]);
+    await raw.query('SELECT set_config($1, $2, true)', ['app.user_id', SENIOR_A]);
+    await raw.query('SELECT set_config($1, $2, true)', ['app.user_role', 'senior']);
+    await assert.rejects(
+      () =>
+        raw.query(
+          "UPDATE governance_audit_log SET outcome = 'denied' WHERE id = '00000000-0000-0000-0000-000000000000'"
+        ),
+      // GRANT denial fires first; the BEFORE-UPDATE append-only
+      // trigger would catch it as the backstop if grants were ever
+      // relaxed.
+      /permission denied|append.only/i,
+      'lylo_app must be denied UPDATE on governance_audit_log'
+    );
+    await raw.query('ROLLBACK');
+  } finally {
+    await raw.end();
+  }
+});
+
+// Scenario 16.
+test('memory-governance (GM-18): pg-shaped errors from the repository path are wrapped into MemoryRepositoryError (no pg detail leak)', async () => {
+  // Force a pg error end-to-end: attempt insertPrivateMemory inside
+  // withMemoryContext with a userId that's a syntactically valid UUID
+  // but does NOT correspond to a row in `users`. The composite FK
+  // (pilot_instance_id, owning_user_id) → users (pilot_instance_id, id)
+  // raises SQLSTATE 23503 (foreign_key_violation). The wrapper must
+  // turn it into a MemoryRepositoryError with no pg details on it.
+  const orphanUserId = '00000000-0000-0000-0000-deadbeefdead';
+  const { MemoryRepositoryError } = require('../../src/memory');
+  let caught;
+  try {
+    await withMemoryContext(
+      appPool,
+      { pilotInstanceId: PILOT_A, userId: orphanUserId, userRole: 'senior' },
+      (ctx) =>
+        ctx.insertPrivateMemory({
+          content: 'this must never commit',
+          provenance: 'USER_STATED',
+        })
+    );
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught, 'must have caught the wrapped error');
+  assert.ok(caught instanceof MemoryRepositoryError, 'must be a MemoryRepositoryError');
+  assert.equal(caught.name, 'MemoryRepositoryError');
+  // SQLSTATE 23503 is foreign_key_violation; 42501 would be permission
+  // denied; either is a coarse class. The exact code is whichever pg
+  // raises first — what matters is that detail/where/routine never leak.
+  assert.ok(/^[0-9A-Z]{5}$/.test(caught.error_class), `error_class must be a SQLSTATE: ${caught.error_class}`);
+  assert.equal(caught.detail, undefined, 'pg.detail must not have leaked');
+  assert.equal(caught.where, undefined, 'pg.where must not have leaked');
+  assert.equal(caught.routine, undefined, 'pg.routine must not have leaked');
+  assert.equal(caught.message, 'memory operation failed');
+  // The orphan UUID must not appear in the wrapped error message.
+  assert.equal(caught.message.includes(orphanUserId), false);
+});

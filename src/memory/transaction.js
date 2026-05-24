@@ -5,23 +5,31 @@
  *
  * Every memory-governance op (read or write) must run inside this
  * helper. The helper:
- *   1. Acquires a client from the lylo_app pool.
- *   2. BEGIN.
- *   3. Binds the three session vars (app.pilot_instance_id,
+ *   1. Validates the session context (UUID/role) BEFORE any DB work.
+ *   2. Resolves the pool handle to a real pg.Pool (production) or
+ *      passes through a test-mock pool. Production callers receive a
+ *      MemoryPoolHandle from createMemoryPool and cannot reach the
+ *      underlying pool themselves (OQ-18.1).
+ *   3. Acquires a client from the pool.
+ *   4. BEGIN.
+ *   5. Binds the three session vars (app.pilot_instance_id,
  *      app.user_id, app.user_role) via SELECT set_config($1, $2, true).
  *      set_config(..., is_local=true) is the parameter-safe equivalent
  *      of SET LOCAL — it reverts at COMMIT/ROLLBACK and never escapes
  *      the transaction, so a connection returned to the pool carries
  *      no leaked session vars.
- *   4. Invokes the caller's fn(ctx) where ctx exposes the audit and
+ *   6. Invokes the caller's fn(ctx) where ctx exposes the audit and
  *      repository functions — never the raw pg client.
- *   5. COMMITs on resolve; ROLLBACKs on any throw.
- *   6. Releases the client back to the pool.
+ *   7. COMMITs on resolve; ROLLBACKs on any throw.
+ *   8. Releases the client back to the pool.
  *
- * Each session var is required. A blank/missing pilotInstanceId,
- * userId, or userRole throws BEFORE any DB work. This prevents
- * silently-denying queries from getting interpreted as "the user has
- * no memories."
+ * GM-18 error sanitization (OQ-18.2): any pg-originated error thrown
+ * inside fn(ctx) is wrapped into a MemoryRepositoryError carrying only
+ * `name`, `error_class` (= SQLSTATE), and a fixed safe `message`. The
+ * caller never sees pg's `detail`, `where`, `routine`, `parameters`,
+ * or `internalQuery` — any of which can echo memory content. Caller-
+ * contract validation errors (UUID/role/content/etc.) pass through
+ * unchanged (OQ-18.7).
  *
  * Per OQ-17.10 there is no app.session_id. The vault unlock model is
  * row-state-based (OQ-14.3): visibility of password_locked memories
@@ -29,6 +37,9 @@
  * memory_vault_sessions row whose user_id matches app.user_id, not on
  * a session-variable id.
  */
+
+const { _resolvePool } = require('./client');
+const { MemoryRepositoryError, isPgError, describeErrorClass } = require('./errors');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_ROLES = new Set(['senior', 'family', 'caregiver', 'admin', 'system']);
@@ -63,9 +74,27 @@ function buildCtx(client, sessionCtx) {
   };
 }
 
-async function withMemoryContext(pool, sessionCtx, fn) {
-  if (!pool || typeof pool.connect !== 'function') {
-    throw new Error('withMemoryContext: pool must be a pg.Pool');
+// Wrap a pg error into MemoryRepositoryError so caller logs never see
+// pg's detail/where/routine/parameters. Validation errors thrown by
+// the memory module itself (Error with no `.code` SQLSTATE) pass
+// through unchanged.
+function sanitizeError(err) {
+  if (err && err.name === 'MemoryRepositoryError') return err;
+  if (isPgError(err)) {
+    return new MemoryRepositoryError(
+      describeErrorClass(err),
+      'memory operation failed'
+    );
+  }
+  return err;
+}
+
+async function withMemoryContext(poolOrHandle, sessionCtx, fn) {
+  const pool = _resolvePool(poolOrHandle);
+  if (!pool) {
+    throw new Error(
+      'withMemoryContext: pool must be a MemoryPoolHandle obtained via createMemoryPool'
+    );
   }
   if (typeof fn !== 'function') {
     throw new Error('withMemoryContext: callback function is required');
@@ -98,7 +127,7 @@ async function withMemoryContext(pool, sessionCtx, fn) {
       } catch {
         /* the transaction is already gone; nothing to roll back */
       }
-      throw err;
+      throw sanitizeError(err);
     }
   } finally {
     client.release();
