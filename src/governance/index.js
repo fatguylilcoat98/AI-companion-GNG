@@ -57,12 +57,13 @@
  */
 
 const { classifyExecutionIntent } = require('./classifier');
-const { Decision, DECISION_OUTCOMES, REASONS } = require('./decisions');
+const { Decision, DECISION_OUTCOMES, REASONS, isValidDecision } = require('./decisions');
 const { INTENT_TYPES } = require('./intents');
 
 module.exports = {
   classifyExecutionIntent,
   Decision,
+  isValidDecision,
   INTENT_TYPES,
   DECISION_OUTCOMES,
   REASONS,
