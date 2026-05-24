@@ -13,7 +13,12 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   ('aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'senior-A',     'senior'),
   ('aaaaaaaa-2222-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'family-A',     'family'),
   ('aaaaaaaa-3333-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'caregiver-A',  'caregiver'),
-  ('aaaaaaaa-4444-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin-A',      'admin');
+  ('aaaaaaaa-4444-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin-A',      'admin'),
+  -- GM-25: second admin per pilot so authorization rows can be
+  -- seeded with authorizer != reviewer (admin-A reviews; admin2-A
+  -- authorizes). The CHECK on `users.role` accepts 'admin' for
+  -- multiple users per pilot; only `senior` is one-per-pilot.
+  ('aaaaaaaa-5555-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin2-A',     'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('11111111-1111-1111-1111-111111111111', 'Aria', '{"tone":"warm"}'::jsonb);
@@ -113,7 +118,10 @@ INSERT INTO pilot_instances (id, org_name) VALUES
 
 INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   ('bbbbbbbb-1111-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'senior-B', 'senior'),
-  ('bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin-B',  'admin');
+  ('bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin-B',  'admin'),
+  -- GM-25: second admin per pilot (see comment in Pilot A users
+  -- block above).
+  ('bbbbbbbb-5555-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin2-B', 'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('22222222-2222-2222-2222-222222222222', 'Bram', '{"tone":"steady"}'::jsonb);
@@ -215,3 +223,69 @@ INSERT INTO governance_review_decisions
    'admin',
    'rejected',
    'rejected_insufficient_evidence');
+
+-- GM-25: a third pair of queue rows (REVIEW_*_3) per pilot,
+-- approved by the pilot's first admin, so the GM-25 authorization
+-- seeds can target an approved review. Cross-admin invariant per
+-- OQ-25.14 — admin1 reviews, admin2 authorizes.
+INSERT INTO governance_review_queue
+  (id, pilot_instance_id, decision_intent_type, decision_reason,
+   decision_policy_ref, proposer_user_id, proposer_role,
+   payload_summary, evidence_summary) VALUES
+  ('aaaaaaaa-eeee-1111-1111-700000000003',
+   '11111111-1111-1111-1111-111111111111',
+   'memory.candidate.create',
+   'ai_inferred_requires_review',
+   'source-of-truth-memory-policy.md §3, §5',
+   'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa',
+   'senior',
+   '{"content": "synthetic-A authorized-path candidate", "provenance": "AI_INFERRED"}'::jsonb,
+   '{"source": "synthetic"}'::jsonb),
+  ('bbbbbbbb-eeee-2222-2222-700000000003',
+   '22222222-2222-2222-2222-222222222222',
+   'memory.candidate.create',
+   'ai_inferred_requires_review',
+   'source-of-truth-memory-policy.md §3, §5',
+   'bbbbbbbb-1111-2222-2222-bbbbbbbbbbbb',
+   'senior',
+   '{"content": "synthetic-B authorized-path candidate", "provenance": "AI_INFERRED"}'::jsonb,
+   '{"source": "synthetic"}'::jsonb);
+
+INSERT INTO governance_review_decisions
+  (id, pilot_instance_id, review_queue_id, reviewer_user_id,
+   reviewer_role, review_outcome, review_reason) VALUES
+  ('aaaaaaaa-dddd-1111-1111-800000000002',
+   '11111111-1111-1111-1111-111111111111',
+   'aaaaaaaa-eeee-1111-1111-700000000003',
+   'aaaaaaaa-4444-1111-1111-aaaaaaaaaaaa',
+   'admin',
+   'approved',
+   'approved_admin_review'),
+  ('bbbbbbbb-dddd-2222-2222-800000000002',
+   '22222222-2222-2222-2222-222222222222',
+   'bbbbbbbb-eeee-2222-2222-700000000003',
+   'bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb',
+   'admin',
+   'approved',
+   'approved_admin_review');
+
+-- GM-25: authorization rows. authorizer (admin2) != reviewer
+-- (admin1). authorization_scope must match the underlying intent
+-- type — memory.candidate.create → memory_candidate_admission.
+INSERT INTO governance_execution_authorizations
+  (id, pilot_instance_id, review_decision_id, authorized_by_user_id,
+   authorized_by_role, authorization_scope, authorization_reason) VALUES
+  ('aaaaaaaa-cccc-1111-1111-900000000001',
+   '11111111-1111-1111-1111-111111111111',
+   'aaaaaaaa-dddd-1111-1111-800000000002',
+   'aaaaaaaa-5555-1111-1111-aaaaaaaaaaaa',
+   'admin',
+   'memory_candidate_admission',
+   'admin_explicit_authorization'),
+  ('bbbbbbbb-cccc-2222-2222-900000000001',
+   '22222222-2222-2222-2222-222222222222',
+   'bbbbbbbb-dddd-2222-2222-800000000002',
+   'bbbbbbbb-5555-2222-2222-bbbbbbbbbbbb',
+   'admin',
+   'memory_candidate_admission',
+   'admin_explicit_authorization');

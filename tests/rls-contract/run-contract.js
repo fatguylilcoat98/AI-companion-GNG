@@ -535,13 +535,19 @@ test('governance_review_decisions: caregiver-A sees nothing', async () => {
   });
 });
 
-test('governance_review_decisions: cross-pilot — senior-B sees only pilot-B review decision', async () => {
+test('governance_review_decisions: cross-pilot — senior-B sees only pilot-B review decisions', async () => {
+  // GM-25 added DECISION_B_2 (approved) to support the
+  // authorization-path fixture. Senior-B is the proposer of both
+  // underlying queue items, so they see both decisions via the
+  // proposer-SELECT policy. Pilot A's DECISION_A / DECISION_A_2
+  // must NOT appear.
+  const DECISION_B_2_ID = 'bbbbbbbb-dddd-2222-2222-800000000002';
   const c = await setup();
   await withContext(c, {
     role: 'lylo_app', pilot: PILOT_B, user: SENIOR_B, userRole: 'senior',
   }, async (client) => {
     const ids = await visibleIds(client, 'governance_review_decisions', 'id');
-    assert.deepEqual(ids.sort(), [DECISION_B]);
+    assert.deepEqual(ids.sort(), [DECISION_B, DECISION_B_2_ID].sort());
   });
 });
 
@@ -633,6 +639,148 @@ test('governance_review_decisions INSERT: duplicate review (UNIQUE on review_que
       ),
       /duplicate key|unique/i,
       'second review for same queue row must be rejected'
+    );
+  });
+});
+
+// ---------------------------------------------------------------------
+// governance_execution_authorizations (GM-25): admin-only SELECT;
+// no proposer / reviewer / authorizer / family / caregiver
+// visibility. INSERT requires admin role + tenant + no impersonation.
+// ---------------------------------------------------------------------
+
+const ADMIN2_A = 'aaaaaaaa-5555-1111-1111-aaaaaaaaaaaa';
+const ADMIN2_B = 'bbbbbbbb-5555-2222-2222-bbbbbbbbbbbb';
+const AUTH_A = 'aaaaaaaa-cccc-1111-1111-900000000001';
+const AUTH_B = 'bbbbbbbb-cccc-2222-2222-900000000001';
+const DECISION_A_2 = 'aaaaaaaa-dddd-1111-1111-800000000002';
+const REVIEW_A_3 = 'aaaaaaaa-eeee-1111-1111-700000000003';
+
+test('governance_execution_authorizations: admin in pilot sees the recorded authorization', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_authorizations', 'id');
+    assert.ok(ids.includes(AUTH_A), 'admin must see authorizations in pilot');
+    assert.equal(ids.includes(AUTH_B), false, 'admin must NOT see pilot-B authorizations');
+  });
+});
+
+test('governance_execution_authorizations: senior-A (proposer) sees nothing', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_authorizations', 'id');
+    assert.deepEqual(ids, [], 'proposer must NOT see authorization rows');
+  });
+});
+
+test('governance_execution_authorizations: family / caregiver see nothing', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: FAMILY_A, userRole: 'family',
+  }, async (client) => {
+    assert.deepEqual(await visibleIds(client, 'governance_execution_authorizations', 'id'), []);
+  });
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: CAREGIVER_A, userRole: 'caregiver',
+  }, async (client) => {
+    assert.deepEqual(await visibleIds(client, 'governance_execution_authorizations', 'id'), []);
+  });
+});
+
+test('governance_execution_authorizations: cross-pilot — admin-B sees only pilot-B authorization', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_B, user: 'bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_authorizations', 'id');
+    assert.deepEqual(ids.sort(), [AUTH_B]);
+  });
+});
+
+test('governance_execution_authorizations: lylo_runtime has no grant — SELECT permission denied', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_authorizations'),
+      /permission denied/i,
+      'lylo_runtime must be denied at the GRANT layer'
+    );
+  });
+});
+
+test('governance_execution_authorizations INSERT: non-admin role rejected by WITH CHECK', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_authorizations '
+          + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+          + "VALUES ($1, $2, $3, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+        [PILOT_A, DECISION_A_2, SENIOR_A]
+      ),
+      /row.level security|new row violates row.level/i
+    );
+  });
+});
+
+test('governance_execution_authorizations INSERT: admin cannot impersonate another authorized_by_user_id', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    // Impersonate ADMIN2_A as authorizer while connected as ADMIN_A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_authorizations '
+          + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+          + "VALUES ($1, $2, $3, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+        [PILOT_A, DECISION_A_2, ADMIN2_A]
+      ),
+      /row.level security|new row violates row.level/i
+    );
+  });
+});
+
+test('governance_execution_authorizations INSERT: cross-pilot rejected (composite FK + RLS)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN2_A, userRole: 'admin',
+  }, async (client) => {
+    // Try to authorize pilot-B's decision while operating in pilot A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_authorizations '
+          + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+          + "VALUES ($1, $2, $3, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+        [PILOT_B, 'bbbbbbbb-dddd-2222-2222-800000000002', ADMIN2_A]
+      ),
+      /row.level security|new row violates row.level|foreign key/i
+    );
+  });
+});
+
+test('governance_execution_authorizations INSERT: duplicate authorization for same review_decision rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN2_A, userRole: 'admin',
+  }, async (client) => {
+    // DECISION_A_2 already has AUTH_A seeded; second attempt fails UNIQUE.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_authorizations '
+          + '(pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+          + "VALUES ($1, $2, $3, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+        [PILOT_A, DECISION_A_2, ADMIN2_A]
+      ),
+      /duplicate key|unique/i
     );
   });
 });

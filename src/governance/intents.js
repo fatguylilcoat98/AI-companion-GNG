@@ -72,6 +72,17 @@ const INTENT_TYPES = Object.freeze({
   // actor (src/actors/review-decision-actor.js), not here. The
   // classifier is stateless and has no session context.
   GOVERNANCE_REVIEW_DECIDE: 'governance.review.decide',
+
+  // GM-25: recording an admin's explicit execution authorization
+  // against an approved review_decision. Classifier returns
+  // `admissible` — role enforcement (admin only), data
+  // preconditions (referenced review_decision exists, is approved,
+  // authorizer ≠ reviewer, scope ↔ intent), and the recording
+  // itself live at the execution-authorization actor + DB
+  // BEFORE-INSERT trigger. Constitutional rule: approval is NOT
+  // authorization; authorization is NOT execution; an
+  // authorization row is NOT an execution signal.
+  GOVERNANCE_EXECUTION_AUTHORIZE: 'governance.execution.authorize',
 });
 
 const ALL_INTENT_TYPES = new Set(Object.values(INTENT_TYPES));

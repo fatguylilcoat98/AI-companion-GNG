@@ -250,16 +250,18 @@ test('src/actors/index: re-exports createResponseDeliveryActor and OUTCOMES only
 
 // ---- locked OUTCOMES ----
 
-test('OUTCOMES constants are the locked five-way set (GM-22 + GM-23 + GM-24)', () => {
+test('OUTCOMES constants are the locked six-way set (GM-22 + GM-23 + GM-24 + GM-25)', () => {
   // GM-22 introduced executed / abstained / rejected. GM-23 added
   // `staged` for the review-queue actor's happy path. GM-24 added
-  // `recorded` for the review-decision actor's happy path. The
-  // shared OUTCOMES enum is the locked vocabulary; any addition
-  // fails this test and forces a paired review of the actor
-  // boundary doc and the GM-24 adversarial snapshot (C4).
+  // `recorded` for the review-decision actor's happy path. GM-25
+  // added `authorized_recorded` for the execution-authorization
+  // actor's happy path. The shared OUTCOMES enum is the locked
+  // vocabulary; any addition fails this test and forces a paired
+  // review of the actor boundary doc and the adversarial
+  // snapshot (C4).
   assert.deepEqual(
     Object.values(OUTCOMES).sort(),
-    ['abstained', 'executed', 'recorded', 'rejected', 'staged']
+    ['abstained', 'authorized_recorded', 'executed', 'recorded', 'rejected', 'staged']
   );
 });
 

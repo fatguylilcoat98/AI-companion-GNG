@@ -28,14 +28,28 @@
  *               a review outcome — it is NOT authorization, NOT
  *               execution, and NOT a signal to act. Future
  *               execution gates must be separately approved.
+ *   AUTHORIZED_RECORDED — GM-25: an admin's explicit execution
+ *               authorization (against an approved review_decision
+ *               in the same pilot, with scope matching the
+ *               original intent type, by a human different from
+ *               the reviewer) was durably recorded into
+ *               governance_execution_authorizations. The
+ *               execution-authorization actor returns this
+ *               outcome on the happy path. The verbose form
+ *               preserves the semantic boundary: this is a
+ *               *recording* of authorization, not authorization
+ *               to act. No production code consumes the
+ *               authorization row in GM-25; execution remains a
+ *               separately-gated decision.
  */
 
 const OUTCOMES = Object.freeze({
-  EXECUTED:  'executed',
-  ABSTAINED: 'abstained',
-  REJECTED:  'rejected',
-  STAGED:    'staged',
-  RECORDED:  'recorded',
+  EXECUTED:            'executed',
+  ABSTAINED:           'abstained',
+  REJECTED:            'rejected',
+  STAGED:              'staged',
+  RECORDED:            'recorded',
+  AUTHORIZED_RECORDED: 'authorized_recorded',
 });
 
 module.exports = { OUTCOMES };

@@ -111,7 +111,7 @@ Seventeen baseline CI jobs gate every PR:
   every model SDK including `@anthropic-ai/sdk` is forbidden;
   scheduling (including `setTimeout`) and all `fs` write API are
   forbidden; the classifier is sync, stateless, side-effect-free.
-- The **actors boundary guard** (GM-22 + GM-23 + GM-24) — scopes `src/actors/`;
+- The **actors boundary guard** (GM-22 + GM-23 + GM-24 + GM-25) — scopes `src/actors/`;
   zero SQL keywords; bans `pg`, every model SDK (incl. `@anthropic-ai/sdk`),
   HTTP/server frameworks, `child_process`/`worker_threads`/`cluster`,
   `setInterval`/`setImmediate`/`cron`/`schedule`, all `fs` write API,
@@ -119,13 +119,14 @@ Seventeen baseline CI jobs gate every PR:
   `../runtime`/`../db`/`../setup`/`../memory`/`../companion`; restricts
   `../governance`, `../conversation`, and `../review` imports to their
   public entries.
-- The **review boundary guard** (GM-23 + GM-24) — scopes `src/review/`;
-  bans `UPDATE`/`DELETE`/`DROP`/`ALTER`/`TRUNCATE`/`GRANT`/`REVOKE`/`CREATE`
-  (`INSERT` is permitted but tracked); FROM/JOIN allowlist limited to
-  `governance_review_queue` + `governance_review_decisions` + `users`
-  + `pilot_instances`; INSERT INTO allowlist limited to
-  `governance_review_queue` + `governance_review_decisions`; `pg`
-  import scoped to `src/review/client.js`; every model SDK, HTTP
+- The **review boundary guard** (GM-23 + GM-24 + GM-25) — scopes
+  `src/review/`; bans `UPDATE`/`DELETE`/`DROP`/`ALTER`/`TRUNCATE`/`GRANT`/`REVOKE`/`CREATE`
+  (`INSERT` is permitted but tracked); FROM/JOIN allowlist limited
+  to `governance_review_queue` + `governance_review_decisions` +
+  `governance_execution_authorizations` + `users` + `pilot_instances`;
+  INSERT INTO allowlist limited to `governance_review_queue` +
+  `governance_review_decisions` + `governance_execution_authorizations`;
+  `pg` import scoped to `src/review/client.js`; every model SDK, HTTP
   framework, `child_process`/`worker_threads`/`cluster`, scheduling
   identifiers, `fs` write API, streaming + tool-calling identifiers,
   and the `insertPrivateMemory` identifier are forbidden.
@@ -135,22 +136,23 @@ Seventeen baseline CI jobs gate every PR:
   + review **unit tests** (`node:test`, `tests/runtime/*.test.js` +
   `tests/memory/*.test.js` + `tests/companion/*.test.js` +
   `tests/conversation/*.test.js` + `tests/governance/*.test.js` —
-  including the GM-22 + GM-23 + GM-24 adversarial negative-test
-  suite at `tests/governance/adversarial.test.js` +
-  `tests/actors/*.test.js` + `tests/review/*.test.js`).
+  including the GM-22 + GM-23 + GM-24 + GM-25 adversarial
+  negative-test suite at `tests/governance/adversarial.test.js`
+  + `tests/actors/*.test.js` + `tests/review/*.test.js`.
 - **Integration tests** (Postgres 16 service container,
   `--test-concurrency=1`) — boot scenarios, provisioning, GM-16
   RLS engagement, the GM-17 memory-governance matrix, the GM-19
   companion-read matrix, the GM-20 conversation-mounted matrix
   (the latter injects a mocked Anthropic SDK and asserts exactly
   one model call per `respond()`), the GM-23 review-queue matrix,
-  and the GM-24 review-decision matrix (proves admin records /
-  proposer reads outcome / non-admin denied / self-review trigger
-  / double-review UNIQUE / cross-pilot composite-FK rejection /
-  append-only trigger / GRANT denial for runtime). GM-21 and GM-22
-  add no integration test — both the classifier and the
-  response-delivery actor are pure / unit-tested with mocked
-  dependencies, no DB or model dependency.
+  the GM-24 review-decision matrix, and the GM-25 execution-
+  authorization matrix (proves admin authorizes / non-admin
+  denied / self-authorization trigger / rejected-review trigger /
+  scope-mismatch trigger / double-authorization UNIQUE /
+  cross-pilot composite-FK rejection / append-only trigger /
+  GRANT denial for runtime). GM-21 and GM-22 add no integration
+  test — both the classifier and the response-delivery actor are
+  pure / unit-tested with mocked dependencies.
 - The **RLS / privacy contract** job runs both the synthetic suite
   (`run-contract.js`) and the real-schema suite (`run-real.test.js`)
   serially against a Postgres 16 service container.
@@ -179,6 +181,7 @@ Seventeen baseline CI jobs gate every PR:
 | First Decision-gated actor + adversarial review (GM-22) | Landed as a library (`src/actors/`); not mounted by boot. `createResponseDeliveryActor({conversationRuntime, log?})` returns a frozen actor with `execute(decision, params)`. Five-layer Decision verification: `instanceof Decision` + `isValidDecision` (WeakSet membership — closes prototype-tampering gap) + `Object.isFrozen` + intent-type confusion check + structural-vocabulary revalidation. Verified-but-not-admissible Decisions route to `{outcome: 'abstained' \| 'rejected', decision}`; forged or tampered Decisions throw. The conversation runtime is called exactly once on admissible paths and zero times otherwise. The GM-21 governance module is extended minimally: `_BLESSED` WeakSet inside `decisions.js` and a new `isValidDecision` export from `src/governance/index.js`. New `check-actors-boundary.js` guard; new `tests/governance/adversarial.test.js` (the project's first NEGATIVE test suite — every assertion is "this must NOT work"). EVENT_TYPES + REASONS + INTENT_TYPES snapshot tests assert no vocabulary drift. No new persistence, no new `EVENT_TYPES`, no new RLS, no boot mount, no new dependencies. | `governance/actor-runtime-boundary.md`, `tests/actors/response-delivery-actor.test.js`, `tests/governance/adversarial.test.js` |
 | Review-queue substrate (GM-23) | Landed as a library (`src/review/`) + a second actor (`src/actors/review-queue-actor.js`); not mounted by boot. `db/migrations/008_review_queue.sql` adds `governance_review_queue` with CHECK constraints mirroring GM-21 INTENT_TYPES + REASONS, locked `status = 'pending_review'`, BEFORE-UPDATE-OR-DELETE trigger, and three RLS policies (insert_own / proposer SELECT / admin SELECT). `lylo_app` gets SELECT + INSERT only — no UPDATE/DELETE grants; `lylo_admin` gets SELECT; `lylo_runtime` and `lylo_setup` have no grants. `createReviewQueueActor({reviewQueuePool, log?})` inherits the GM-22 five-layer Decision verification chain and adds a sixth, actor-specific check: `decision.decision === DECISION_OUTCOMES.REQUIRES_REVIEW`. Only `requires_review` Decisions can stage; admissible / inadmissible Decisions throw. The actor returns `{outcome: 'staged', decision, queueEntryId, createdAt}` (the new `STAGED` value in the actor `OUTCOMES` enum). New `check-review-boundary.js` guard scopes `src/review/`; SQL-keyword bans, model-SDK bans, scheduling bans, fs-write bans, cross-layer-import bans. New `tests/integration/review-queue.test.js` proves the end-to-end matrix; the synthetic RLS contract suite (`run-contract.js`) and the real-schema suite (`run-real.test.js`) are extended with the review-queue scenarios. Adversarial suite extended with E-series probes. No dequeue path, no approval engine, no status transitions, no auto-action, no notifications, no boot mount, no new env, no new dependencies, no `EVENT_TYPES` widening. | `governance/review-queue-runtime-boundary.md`, `db/migrations/008_review_queue.sql`, `tests/integration/review-queue.test.js`, `tests/actors/review-queue-actor.test.js`, `tests/governance/adversarial.test.js` |
 | Review-decision substrate (GM-24) | Landed as a library extension (`src/review/repository.js` + `src/review/transaction.js`) + a third Decision-gated actor (`src/actors/review-decision-actor.js`); not mounted by boot. `db/migrations/009_review_decisions.sql` adds `governance_review_decisions` with `reviewer_role` CHECK-locked to `'admin'`, `review_outcome` CHECK in `('approved','rejected')`, `review_reason` CHECK in a 5-value vocabulary, `UNIQUE(review_queue_id)`, BEFORE-UPDATE-OR-DELETE append-only trigger, and BEFORE-INSERT self-review trigger. Three RLS policies: insert_admin (admin-only WITH CHECK + tenant + no impersonation), admin SELECT, proposer SELECT. `lylo_app` gets SELECT + INSERT only — no UPDATE/DELETE grants; `lylo_admin` gets SELECT; `lylo_runtime`/`lylo_setup` have no grants. `createReviewDecisionActor({reviewQueuePool, log?})` inherits the GM-22/23 verification chain and adds a seventh, actor-specific layer: `params.userRole === 'admin'`. New ctx ops: `listPendingReviewItems`, `inspectReviewItem`, `recordReviewDecision`. Classifier widened by exactly one intent (`governance.review.decide`), one reason (`review_decision_recording_permitted`), one POLICY_REF. `OUTCOMES` widens to five values (`recorded` added). EVENT_TYPES unchanged (the new table IS the artifact). Boundary guard extended for the new table; adversarial suite F-series (F1–F12) covers forged Decisions, prototype tampering, wrong intent, non-admin role, vocabulary drift, sentinel leakage, EVENT_TYPES lock. RLS contract suites extended in both synthetic and real-schema modes. New `tests/integration/review-decision.test.js` proves end-to-end. **Constitutional rule: recording a review outcome is NOT execution; approval is NOT authorization.** No production consumer of `governance_review_decisions`; future execution capability is a separately gated decision. | `governance/review-decision-runtime-boundary.md`, `db/migrations/009_review_decisions.sql`, `tests/integration/review-decision.test.js`, `tests/actors/review-decision-actor.test.js`, `tests/governance/adversarial.test.js` |
+| Execution-authorization substrate (GM-25) | Landed as a library extension (`src/review/repository.js` + `src/review/transaction.js`) + a fourth Decision-gated actor (`src/actors/execution-authorization-actor.js`); not mounted by boot. `db/migrations/010_execution_authorizations.sql` adds `governance_execution_authorizations` with `authorized_by_role` CHECK-locked to `'admin'`, `authorization_scope` CHECK in a 4-value vocabulary (`memory_candidate_admission` + 3 `future_*` forward-looking values), `authorization_reason` CHECK in 1-value vocabulary (`admin_explicit_authorization`), `UNIQUE(review_decision_id)` for replay prevention, BEFORE-UPDATE-OR-DELETE append-only trigger, and a **BEFORE-INSERT preconditions trigger** that walks the chain authorization → review_decision → review_queue and refuses if (a) the referenced review_decision doesn't exist, (b) review_outcome ≠ 'approved', (c) authorizer = reviewer (self-authorization forbidden), or (d) the authorization_scope doesn't match the underlying intent type. Two RLS policies: `auth_insert_admin` (admin-only WITH CHECK + tenant + no impersonation), `auth_admin_select` (admin-only SELECT — no proposer/reviewer/family/caregiver/runtime visibility). `lylo_app` gets SELECT + INSERT; `lylo_admin` gets SELECT; `lylo_runtime`/`lylo_setup` have no grants. `createExecutionAuthorizationActor({reviewQueuePool, log?})` inherits the GM-22/23/24 verification chain and adds two actor-specific layers (admin-only role + vocabulary locks). New ctx ops: `recordExecutionAuthorization`, `listExecutionAuthorizations`, `inspectExecutionAuthorization`. Classifier widened by exactly one intent (`governance.execution.authorize`), one reason (`execution_authorization_recording_permitted`), one POLICY_REF. `OUTCOMES` widens to six values (`authorized_recorded` added). EVENT_TYPES unchanged. Two new locked vocabularies: AUTHORIZATION_SCOPES (4 values) + AUTHORIZATION_REASONS (1 value). Adversarial G-series (G1–G13) covers forged Decisions, prototype tampering, wrong intent, non-admin role, vocabulary drift, sentinel leakage, EVENT_TYPES lock, AND **G13 = static-scan canary** that asserts zero references to the new table outside the documented writing path. RLS contract suites extended in both synthetic and real-schema modes (fixtures gained a second admin per pilot, per OQ-25.14). New `tests/integration/execution-authorization.test.js` proves end-to-end. **Constitutional rule: approval is NOT authorization; authorization is NOT execution; an authorization row is NOT an execution signal.** No production consumer; future execution capability is a separately gated decision with its own boundary guard, adversarial review, and explicit semantics for revocation/expiry/replay (none of which exist in GM-25). | `governance/execution-authorization-runtime-boundary.md`, `db/migrations/010_execution_authorizations.sql`, `tests/integration/execution-authorization.test.js`, `tests/actors/execution-authorization-actor.test.js`, `tests/governance/adversarial.test.js` |
 
 ## What is explicitly deferred
 
@@ -255,14 +258,32 @@ execution; approval is NOT authorization.** No external
 readiness claim — recorded approvals are governance artifacts,
 not signals to act.
 
-The next dangerous step is the **additional memory-governance ops**
-that need new grants or policies: visibility promotion,
-admissibility transitions, retraction, supersession, and vault PIN
-verification + session opening. Each is gated on its own owner
-decision. **Beyond** that lies the equally-gated build-out of any
-execution capability that would consume `governance_review_decisions`
-rows — its own decision gate, its own boundary guard, its own
-adversarial review.
+GM-25 adds the **execution-authorization substrate**: the first
+time an admin's explicit authorization (against an approved
+review_decision, by a *different* admin, with a scope matching
+the original intent) can be durably recorded. Library-only; no
+production consumer; admin-only INSERT WITH CHECK; UNIQUE on
+review_decision_id (one authorization per review); BEFORE-INSERT
+preconditions trigger walks the whole chain and refuses
+self-authorization, authorization of a rejected review, or
+scope-↔-intent mismatch. Two new locked vocabularies
+(AUTHORIZATION_SCOPES, AUTHORIZATION_REASONS) and one new actor
+outcome (`authorized_recorded`). The substrate now mechanically
+preserves a **four-stage** governance chain — propose → review →
+authorize → (future) execute — and refuses any future GM that
+collapses the boundary by accident: adversarial G13 is a
+static-scan canary that fails the build if any code outside the
+documented writing path references `governance_execution_authorizations`.
+**Constitutional rule: approval is NOT authorization;
+authorization is NOT execution; an authorization row is NOT an
+execution signal.** No readiness claim.
+
+The next dangerous step is **any consumer of
+`governance_execution_authorizations`** — i.e., the first real
+execution capability. That is its own decision gate, its own
+boundary guard, its own adversarial review, with its own
+semantics for revocation, expiry, and replay protection (none of
+which exist in GM-25). G13 catches accidental introduction.
 
 ## Cross-references
 

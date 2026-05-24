@@ -312,7 +312,7 @@ test('integrity: every Decision the classifier returns has a REASONS-vocabulary 
 
 // ---- admissibility-before-execution: only one intent type is admissible by default ----
 
-test('admissibility-before-execution: only response.deliver and governance.review.decide are admissible by default; everything else is requires_review or inadmissible', () => {
+test('admissibility-before-execution: response.deliver, governance.review.decide, and governance.execution.authorize are admissible by default; everything else is requires_review or inadmissible', () => {
   const admissibleTypes = [];
   for (const type of Object.values(INTENT_TYPES)) {
     const intent =
@@ -323,13 +323,15 @@ test('admissibility-before-execution: only response.deliver and governance.revie
     if (d.decision === DECISION_OUTCOMES.ADMISSIBLE) admissibleTypes.push(type);
   }
   // GM-21 baseline: response.deliver only.
-  // GM-24 addition: governance.review.decide (the actor enforces
-  // admin-only role; the classifier is stateless and admits the
-  // intent type unconditionally).
+  // GM-24 addition: governance.review.decide.
+  // GM-25 addition: governance.execution.authorize.
+  // Both GM-24 and GM-25 push role enforcement to their respective
+  // actors; the classifier is stateless and admits the intent type
+  // unconditionally.
   assert.deepEqual(
     admissibleTypes.sort(),
-    ['governance.review.decide', 'response.deliver'],
-    'exactly two intent types should be admissible by default after GM-24'
+    ['governance.execution.authorize', 'governance.review.decide', 'response.deliver'],
+    'exactly three intent types should be admissible by default after GM-25'
   );
 });
 

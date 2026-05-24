@@ -1,20 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 /*
- * Baseline CI guard — review boundary (GM-23 + GM-24).
+ * Baseline CI guard — review boundary (GM-23 + GM-24 + GM-25).
  *
  * Mechanically enforces the contracts documented in
- * docs/governance/review-queue-runtime-boundary.md AND
- * docs/governance/review-decision-runtime-boundary.md for
- * src/review/.
+ * docs/governance/review-queue-runtime-boundary.md,
+ * docs/governance/review-decision-runtime-boundary.md, AND
+ * docs/governance/execution-authorization-runtime-boundary.md
+ * for src/review/.
  *
- * Mirrors check-memory-boundary.js in posture but for a tighter
- * surface: in GM-24 the review module touches two tables
- * (governance_review_queue + governance_review_decisions). The
- * GM-23 read API was added in GM-24 (per OQ-24.11) — SELECT on
- * governance_review_queue is now permitted; SELECT on
- * governance_review_decisions is also permitted via the LEFT JOIN
- * in listPendingReviewItems.
+ * As of GM-25 the review module touches three tables
+ * (governance_review_queue + governance_review_decisions +
+ * governance_execution_authorizations). All three are append-only
+ * at the DB layer; the module has no UPDATE/DELETE responsibilities.
  *
  * Fails the build on:
  *   1. A forbidden write/DDL SQL keyword (UPDATE, DELETE, DROP,
@@ -22,9 +20,10 @@
  *      semantics; INSERT permitted but tracked separately).
  *   2. A FROM/JOIN clause referencing a table outside the review-
  *      module read allowlist (governance_review_queue,
- *      governance_review_decisions, users, pilot_instances).
- *   3. An INSERT INTO targeting any table other than
- *      governance_review_queue OR governance_review_decisions.
+ *      governance_review_decisions,
+ *      governance_execution_authorizations, users, pilot_instances).
+ *   3. An INSERT INTO targeting any table other than the three
+ *      append-only governance artifacts above.
  *   4. An import of pg outside src/review/client.js.
  *   5. An import of a model SDK (any).
  *   6. An import of an HTTP/server framework (http, https, express,
@@ -56,6 +55,7 @@ const PG_ALLOWED_PATH = 'src/review/client.js';
 const SELECT_ALLOWED_TABLES = new Set([
   'governance_review_queue',
   'governance_review_decisions',
+  'governance_execution_authorizations',
   'users',
   'pilot_instances',
 ]);
@@ -63,6 +63,7 @@ const SELECT_ALLOWED_TABLES = new Set([
 const INSERT_ALLOWED_TABLES = new Set([
   'governance_review_queue',
   'governance_review_decisions',
+  'governance_execution_authorizations',
 ]);
 
 // All write/DDL keywords except INSERT (which is permitted but

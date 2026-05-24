@@ -57,6 +57,9 @@ const {
   listPendingReviewItems,
   inspectReviewItem,
   recordReviewDecision,
+  recordExecutionAuthorization,
+  listExecutionAuthorizations,
+  inspectExecutionAuthorization,
 } = require('./repository');
 
 function buildCtx(client, sessionCtx) {
@@ -69,6 +72,13 @@ function buildCtx(client, sessionCtx) {
     listPendingReviewItems: (options) => listPendingReviewItems(client, sessionCtx, options),
     inspectReviewItem: (queueId) => inspectReviewItem(client, sessionCtx, queueId),
     recordReviewDecision: (input) => recordReviewDecision(client, sessionCtx, input),
+    // GM-25: execution-authorization read + write.
+    recordExecutionAuthorization: (input) =>
+      recordExecutionAuthorization(client, sessionCtx, input),
+    listExecutionAuthorizations: (options) =>
+      listExecutionAuthorizations(client, sessionCtx, options),
+    inspectExecutionAuthorization: (authorizationId) =>
+      inspectExecutionAuthorization(client, sessionCtx, authorizationId),
   };
 }
 

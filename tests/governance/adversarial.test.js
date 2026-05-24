@@ -266,12 +266,15 @@ test('C1. EVENT_TYPES snapshot: the GM-18-locked memory-audit vocabulary is unch
   // they don't go through governance_audit_log.
 });
 
-test('C2. REASONS snapshot: GM-21 vocabulary + the GM-24 addition (review_decision_recording_permitted).', () => {
-  // GM-24 added exactly one REASON. If a future PR widens the
-  // vocabulary, this snapshot diff catches it and forces a paired
-  // review of the governance + actor + adversarial-test docs.
+test('C2. REASONS snapshot: GM-21 vocabulary + GM-24 + GM-25 additions.', () => {
+  // GM-24 added review_decision_recording_permitted; GM-25 adds
+  // execution_authorization_recording_permitted. If a future PR
+  // widens the vocabulary, this snapshot diff catches it and
+  // forces a paired review of the governance + actor +
+  // adversarial-test docs.
   const SNAPSHOT = [
     'ai_inferred_requires_review',
+    'execution_authorization_recording_permitted',
     'external_side_effects_not_authorized',
     'malformed_intent_payload',
     'response_delivery_permitted',
@@ -289,11 +292,13 @@ test('C2. REASONS snapshot: GM-21 vocabulary + the GM-24 addition (review_decisi
     'governance REASONS snapshot drifted — adding reasons requires paired updates to docs/governance/');
 });
 
-test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + the GM-24 addition (governance.review.decide).', () => {
-  // GM-24 added exactly one intent type. If a future PR widens
-  // the taxonomy, this snapshot diff catches it.
+test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + GM-24 + GM-25 additions.', () => {
+  // GM-24 added governance.review.decide; GM-25 adds
+  // governance.execution.authorize. If a future PR widens the
+  // taxonomy, this snapshot diff catches it.
   const SNAPSHOT = [
     'external.side_effect',
+    'governance.execution.authorize',
     'governance.review.decide',
     'memory.candidate.create',
     'memory.retract',
@@ -308,11 +313,11 @@ test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + the GM-24 addition (governance
     'INTENT_TYPES snapshot drifted — adding intent types requires paired updates to docs/governance/');
 });
 
-test('C4. OUTCOMES snapshot: GM-22/23 + the GM-24 addition (recorded).', () => {
-  // GM-24 added exactly one actor outcome. The five-way set is
+test('C4. OUTCOMES snapshot: GM-22/23/24 + the GM-25 addition (authorized_recorded).', () => {
+  // GM-25 added exactly one actor outcome. The six-way set is
   // locked here; any future widening must update this snapshot
   // alongside docs/governance/actor-runtime-boundary.md.
-  const SNAPSHOT = ['abstained', 'executed', 'recorded', 'rejected', 'staged'];
+  const SNAPSHOT = ['abstained', 'authorized_recorded', 'executed', 'recorded', 'rejected', 'staged'];
   const current = Object.values(OUTCOMES).sort();
   assert.deepEqual(current, SNAPSHOT.sort(),
     'actor OUTCOMES snapshot drifted — adding outcomes requires paired updates to actor-runtime-boundary.md');
@@ -736,4 +741,240 @@ test('F12. Sole production path to a review_decide Decision the actor accepts is
   // The actor reached the pool exactly once on the only valid path
   // exercised in this test.
   assert.equal(pool.getConnectCalls(), 1);
+});
+
+// ===================================================================
+// G. GM-25 execution-authorization actor adversarial probes
+// ===================================================================
+
+const { createExecutionAuthorizationActor } = require('../../src/actors');
+
+const REVIEW_DECISION_ID = 'dddddddd-1111-1111-1111-dddddddddddd';
+
+function makeMockAuthPool() {
+  const queries = [];
+  let connectCalls = 0;
+  const client = {
+    queries,
+    async query(text) {
+      queries.push(text);
+      if (/RETURNING/i.test(text)) {
+        return { rows: [{ id: 'cccccccc-9999-9999-9999-cccccccccccc', created_at: new Date() }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => {},
+  };
+  return {
+    getQueries: () => queries,
+    getConnectCalls: () => connectCalls,
+    connect: async () => { connectCalls += 1; return client; },
+  };
+}
+
+function baseAuthParams() {
+  return {
+    pilotInstanceId: PILOT,
+    userId: ADMIN,
+    userRole: 'admin',
+    reviewDecisionId: REVIEW_DECISION_ID,
+    authorizationScope: 'memory_candidate_admission',
+    authorizationReason: 'admin_explicit_authorization',
+  };
+}
+
+test('G1. Plain-object Decision to execution-authorization actor → throws (instanceof fails); pool not consulted.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_AUTHORIZATION_RECORDING_PERMITTED,
+    policyRef: 'execution-authorization-runtime-boundary.md §3',
+  };
+  await assert.rejects(() => actor.execute(fake, baseAuthParams()), /must be a Decision instance/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G2. Prototype-tampered Decision passes instanceof but isValidDecision rejects → throws.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_AUTHORIZATION_RECORDING_PERMITTED,
+    policyRef: 'execution-authorization-runtime-boundary.md §3',
+  };
+  Object.setPrototypeOf(fake, Decision.prototype);
+  Object.freeze(fake);
+  assert.ok(fake instanceof Decision);
+  await assert.rejects(() => actor.execute(fake, baseAuthParams()), /prototype tampering or forgery/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G3. Real Decision with wrong intent type (governance.review.decide) → throws (layer-4).', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_REVIEW_DECIDE });
+  await assert.rejects(
+    () => actor.execute(wrong, baseAuthParams()),
+    /decision\.intentType must be "governance\.execution\.authorize"/
+  );
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G4. Real Decision with response.deliver intent → throws (layer-4).', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.RESPONSE_DELIVER });
+  await assert.rejects(() => actor.execute(wrong, baseAuthParams()), /intentType/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G5. Non-admin userRole rejected BEFORE pool.connect.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  for (const role of ['senior', 'family', 'caregiver', 'system']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseAuthParams(), userRole: role }),
+      /userRole must be "admin"/,
+      `non-admin role ${role} should be rejected`
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G6. authorizationScope outside locked vocabulary → throws.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  for (const bad of ['arbitrary_action', '', 'MEMORY_CANDIDATE_ADMISSION', 'memory_candidate_admission ', 'execute_now']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseAuthParams(), authorizationScope: bad }),
+      /authorizationScope must be one of/
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G7. authorizationReason outside locked vocabulary → throws.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  for (const bad of ['because', 'admin_did_it', '', 'ADMIN_EXPLICIT_AUTHORIZATION']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseAuthParams(), authorizationReason: bad }),
+      /authorizationReason must be one of/
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G8. reviewDecisionId / pilotInstanceId / userId non-UUID → throws BEFORE pool.connect.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseAuthParams(), reviewDecisionId: 'not-uuid' }),
+    /reviewDecisionId must be a UUID/
+  );
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseAuthParams(), pilotInstanceId: 'x' }),
+    /pilotInstanceId must be a UUID/
+  );
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseAuthParams(), userId: 'y' }),
+    /userId must be a UUID/
+  );
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('G9. Authorizer impersonation by input: authorizedByUserId in params is silently ignored.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  await actor.execute(
+    decision,
+    Object.assign(baseAuthParams(), { authorizedByUserId: '99999999-9999-9999-9999-999999999999' })
+  );
+  // The INSERT happened — the repository-layer test asserts the
+  // parameter binding sources from sessionCtx, not from input.
+  assert.equal(pool.getConnectCalls(), 1);
+});
+
+test('G10. Sentinel content in unknown params field never appears in captured logs.', async () => {
+  const SENTINEL = 'G10_SECRET_AAA';
+  const pool = makeMockAuthPool();
+  const captured = [];
+  const log = {
+    info(event, fields) {
+      captured.push(JSON.stringify({ ts: 'X', level: 'info', event, pid: 0, ...(fields || {}) }));
+    },
+  };
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool, log });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  await actor.execute(
+    decision,
+    Object.assign(baseAuthParams(), { authorizerNotes: SENTINEL, payload: SENTINEL })
+  );
+  const text = captured.join('\n');
+  assert.equal(text.includes(SENTINEL), false, 'unknown-field sentinel must not appear in logs');
+  assert.ok(text.includes('actor.execution_authorization.recorded'));
+});
+
+test('G11. EVENT_TYPES snapshot still locked — GM-25 added NO new audit event types.', () => {
+  const SNAPSHOT = ['memory.created', 'memory.list'];
+  const current = Object.values(memoryAudit.EVENT_TYPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'GM-25 must not widen memory EVENT_TYPES — the authorizations table IS the artifact');
+});
+
+test('G12. Sole production path to a governance.execution.authorize Decision the actor accepts is classifyExecutionIntent.', async () => {
+  const pool = makeMockAuthPool();
+  const actor = createExecutionAuthorizationActor({ reviewQueuePool: pool });
+  const real = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  const result = await actor.execute(real, baseAuthParams());
+  assert.equal(result.outcome, OUTCOMES.AUTHORIZED_RECORDED);
+  assert.equal(pool.getConnectCalls(), 1);
+});
+
+test('G13. Static scan: zero references to governance_execution_authorizations outside the writing path.', () => {
+  // The canary: greps src/ for any reference to the table and
+  // asserts the count matches the known writing-path files. Any
+  // additional reference is a potential consumer leak.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const WRITING_PATH = new Set([
+    'src/review/repository.js',
+    'src/review/transaction.js',
+    'src/review/index.js',
+    'src/actors/execution-authorization-actor.js',
+    'src/actors/outcomes.js',
+    'src/actors/index.js',
+    'scripts/ci/check-review-boundary.js',
+  ]);
+  function walk(rel, out) {
+    const abs = path.join(REPO, rel);
+    if (!fs.existsSync(abs)) return;
+    const st = fs.statSync(abs);
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(abs)) walk(`${rel}/${name}`, out);
+    } else if (rel.endsWith('.js')) {
+      out.push(rel);
+    }
+  }
+  const files = [];
+  for (const root of ['src', 'scripts/ci']) walk(root, files);
+  const leaks = [];
+  for (const rel of files) {
+    const content = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    if (content.includes('governance_execution_authorizations') && !WRITING_PATH.has(rel)) {
+      leaks.push(rel);
+    }
+  }
+  assert.deepEqual(leaks, [],
+    'GM-25 canary: governance_execution_authorizations referenced outside the writing path — '
+    + 'a future consumer may be leaking through. Files with leaks: ' + leaks.join(', '));
 });

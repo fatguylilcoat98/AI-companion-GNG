@@ -56,10 +56,12 @@ GRANT SELECT ON pilot_instances, companion_profile, supported_person_profile, se
 GRANT SELECT ON pilot_instances, users, companion_profile, supported_person_profile,
                 circle_contacts, memory_vaults, memory_vault_sessions, memory_store,
                 governance_audit_log, governance_review_queue,
-                governance_review_decisions
+                governance_review_decisions,
+                governance_execution_authorizations
   TO lylo_app;
 GRANT INSERT ON memory_store, governance_audit_log, memory_vault_sessions,
-                governance_review_queue, governance_review_decisions
+                governance_review_queue, governance_review_decisions,
+                governance_execution_authorizations
   TO lylo_app;
 GRANT UPDATE (revoked_at) ON memory_vault_sessions TO lylo_app;
 
@@ -70,7 +72,8 @@ GRANT INSERT, SELECT ON pilot_instances, users, companion_profile,
 GRANT SELECT ON pilot_instances, users, companion_profile, supported_person_profile,
                 circle_contacts, memory_vaults, memory_vault_sessions,
                 governance_audit_log, setup_state, governance_review_queue,
-                governance_review_decisions
+                governance_review_decisions,
+                governance_execution_authorizations
   TO lylo_admin;
 
 -- ---------------------------------------------------------------------
@@ -90,6 +93,7 @@ ALTER TABLE governance_audit_log      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE setup_state               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE governance_review_queue   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE governance_review_decisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE governance_execution_authorizations ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------
 -- Tenant-scoped SELECT policies.
@@ -281,4 +285,26 @@ CREATE POLICY review_decisions_proposer_select ON governance_review_decisions FO
          AND q.pilot_instance_id = governance_review_decisions.pilot_instance_id
          AND q.proposer_user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
     )
+  );
+
+-- ---------------------------------------------------------------------
+-- governance_execution_authorizations (GM-25): admin-only INSERT
+-- (with tenant + no-impersonation WITH CHECK) and admin-only SELECT.
+-- No proposer / reviewer / authorizer / family / caregiver SELECT
+-- policy. Authorizations are admin-to-admin governance metadata.
+-- No UPDATE/DELETE policies; append-only at the trigger layer
+-- (real schema) plus the absence of any GRANT for those ops.
+-- ---------------------------------------------------------------------
+
+CREATE POLICY auth_insert_admin ON governance_execution_authorizations FOR INSERT
+  WITH CHECK (
+    pilot_instance_id = NULLIF(current_setting('app.pilot_instance_id', true), '')::uuid
+    AND authorized_by_user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+    AND current_setting('app.user_role', true) = 'admin'
+  );
+
+CREATE POLICY auth_admin_select ON governance_execution_authorizations FOR SELECT
+  USING (
+    pilot_instance_id = NULLIF(current_setting('app.pilot_instance_id', true), '')::uuid
+    AND current_setting('app.user_role', true) = 'admin'
   );
