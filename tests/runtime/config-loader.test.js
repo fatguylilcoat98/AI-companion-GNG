@@ -3,37 +3,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  resolvePilotFrom,
+  loadRuntimeConfig,
   reassembleConfig,
   CONTRACT_VERSION,
 } = require('../../src/runtime/config-loader');
 
-test('resolvePilotFrom: zero rows is not ok', () => {
-  const r = resolvePilotFrom([], null);
+test('loadRuntimeConfig: missing pilotInstanceId is an immediate not-ok result', async () => {
+  // The pool is never consulted — the guard runs before connect.
+  const sentinel = {
+    connect() {
+      throw new Error('pool.connect must not be called when pilotInstanceId is missing');
+    },
+  };
+  const r = await loadRuntimeConfig(sentinel, {});
   assert.equal(r.ok, false);
-  assert.match(r.reason, /no pilot_instances/);
-});
-
-test('resolvePilotFrom: more than one row is not ok', () => {
-  const r = resolvePilotFrom(['a', 'b'], null);
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /exactly one/);
-});
-
-test('resolvePilotFrom: exactly one row resolves', () => {
-  const r = resolvePilotFrom(['pilot-1'], null);
-  assert.equal(r.ok, true);
-  assert.equal(r.pilotInstanceId, 'pilot-1');
-});
-
-test('resolvePilotFrom: a matching PILOT_INSTANCE_ID resolves', () => {
-  assert.equal(resolvePilotFrom(['pilot-1'], 'pilot-1').ok, true);
-});
-
-test('resolvePilotFrom: a mismatched PILOT_INSTANCE_ID is not ok', () => {
-  const r = resolvePilotFrom(['pilot-1'], 'pilot-2');
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /PILOT_INSTANCE_ID/);
+  assert.match(r.reason, /LYLO_PILOT_INSTANCE_ID/);
 });
 
 test('reassembleConfig: a null row yields null', () => {

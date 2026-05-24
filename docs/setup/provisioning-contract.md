@@ -81,7 +81,12 @@ migrations, and run the script against the fresh instance.
 4. Companion sub-object validated against `companion.schema.json` in
    deployed mode (using the GM-6 shared core). Failure →
    `setup.answers.invalid`, exit 1.
-5. `DATABASE_URL` from env. Missing → `setup.env.error`, exit 1.
+5. `LYLO_SETUP_DATABASE_URL` from env. Missing → `setup.env.error`,
+   exit 1. The connecting identity must resolve to the `lylo_setup`
+   DB role (BYPASSRLS, INSERT/SELECT on the four config tables +
+   `users`; no grants on memory tables). See
+   `../governance/rls-privacy-contract.md` and
+   `../deployment/operator-runbook.md` §8.
 6. Database connection. Failure → `setup.db.error`, exit 1.
 7. Idempotency check (see above).
 8. `BEGIN`; insert the four rows in order, recording a paper-trail
@@ -97,7 +102,7 @@ partial state is persisted.
 |---|---|---|
 | `setup.start` | info | Script invoked; includes `force` boolean |
 | `setup.answers.invalid` | error | Missing path, unreadable file, malformed JSON, blank required field, or companion-config validation failure |
-| `setup.env.error` | error | `DATABASE_URL` missing |
+| `setup.env.error` | error | `LYLO_SETUP_DATABASE_URL` missing |
 | `setup.db.error` | error | DB connect or query failure (coarse `error_class`) |
 | `setup.idempotency.refused` | error | A pilot already exists and `--force` was not passed |
 | `setup.force.not_implemented` | error | `--force` was passed; destructive reseed is not implemented in this version |

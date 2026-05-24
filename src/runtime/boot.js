@@ -70,7 +70,7 @@ async function boot(rawEnv, options) {
     logger.info('boot.inert');
     currentState = STATES.INERT;
   } else {
-    pool = createPool(env.databaseUrl, { log: logger.emit });
+    pool = createPool(env.runtimeDatabaseUrl, { log: logger.emit });
     const conn = await connectWithRetry(pool, {
       delaysMs: opts.dbRetryDelaysMs,
       log: logger.emit,
@@ -80,7 +80,9 @@ async function boot(rawEnv, options) {
       currentState = STATES.CONFIGURATION_INVALID;
     } else {
       try {
-        const loaded = await loadRuntimeConfig(pool, { envPilotId: env.pilotInstanceId });
+        const loaded = await loadRuntimeConfig(pool, {
+          pilotInstanceId: env.pilotInstanceId,
+        });
         if (!loaded.ok) {
           logger.error('boot.pilot.resolution_failed', { reason: loaded.reason });
           currentState = STATES.CONFIGURATION_INVALID;

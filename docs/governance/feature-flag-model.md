@@ -27,13 +27,17 @@ runtime mounts at all.
 - Flip-off rollback: set `false` and redeploy. With an additive-only
   schema, no data is destroyed.
 
-### Layer 2 — RLS enforcement (independent)
+### Layer 2 — RLS enforcement (intrinsic to the connection role, no flag)
 
-`RLS_ENFORCED` (environment variable, default `false`) governs database
-row-level-security **enforcement**. It is deliberately **independent**
-of the Layer-1 switch: RLS is validated through a shadow period before
-enforcement, and that flip must not be coupled to the runtime mount. A
-valid state is: runtime mounted, RLS still in shadow.
+GM-16 made RLS engagement **intrinsic** to the runtime's DB connection
+role. The runtime connects via `LYLO_RUNTIME_DATABASE_URL` whose
+effective identity is `lylo_runtime`; RLS is always engaged because
+that role does not have `BYPASSRLS`. There is no longer a runtime
+toggle for RLS — flipping it on or off would require changing the
+connection-string secret, not a feature flag.
+
+The historical `RLS_ENFORCED` environment variable was removed; a
+boot that sets it has no effect.
 
 ### Layer 3 — capability sub-flags
 
@@ -46,8 +50,8 @@ flags have no effect.
 ## Precedence rules
 
 1. Layer-1 `false` => every Layer-3 flag is inert.
-2. `RLS_ENFORCED` is evaluated independently and may be `false` while
-   the runtime is mounted.
+2. RLS engagement is fixed by the connection role (`lylo_runtime`); no
+   flag controls it.
 3. A Layer-3 flag set `true` while Layer-1 is `false` is a no-op, not an
    error.
 

@@ -206,37 +206,37 @@ in either suite fails the build. See `baseline-ci.md`.
 | Synthetic contract validates policies | Landed | GM-14 |
 | Real-schema migration installs roles, GRANTs, RLS, policies | Landed | GM-15 |
 | Real-schema contract suite runs on every PR | Landed | GM-15 |
-| Runtime connects as `lylo_runtime` via `LYLO_RUNTIME_DATABASE_URL` | Deferred | GM-16 |
-| Loader sets `app.pilot_instance_id` (env-first, OQ-15.2) | Deferred | GM-16 |
-| Provisioning connects as `lylo_setup` via `LYLO_SETUP_DATABASE_URL` | Deferred | GM-16 |
+| Runtime connects as `lylo_runtime` via `LYLO_RUNTIME_DATABASE_URL` | Landed | GM-16 |
+| Loader sets `app.pilot_instance_id` via env-first `LYLO_PILOT_INSTANCE_ID` (OQ-15.2) | Landed | GM-16 |
+| Provisioning connects as `lylo_setup` via `LYLO_SETUP_DATABASE_URL` | Landed | GM-16 |
+| `rls-engagement` integration test proves RLS is engaged (not silently bypassed) | Landed | GM-16 |
 
-As of GM-15, `db/migrations/007_rls_policies.sql` creates the four
-`lylo_*` roles, applies the policies, and enables RLS on the ten
-client-scoped tables. **But the runtime and provisioning scripts still
-connect with the operator's `DATABASE_URL`**, typically a bootstrap
-superuser that has `BYPASSRLS` by default. RLS therefore exists on the
-schema but is dormant for the connecting application until GM-16
-flips the connection role.
+As of GM-16 the connection wire-up is complete:
 
-GM-16 (separate PR, separate decision gate) will:
+- `src/runtime/env.js` requires `LYLO_RUNTIME_DATABASE_URL` and
+  `LYLO_PILOT_INSTANCE_ID` (UUID-validated). The historical
+  `DATABASE_URL` / `PILOT_INSTANCE_ID` / `RLS_ENFORCED` variables are
+  no longer accepted (OQ-16.2, OQ-16.7).
+- `src/runtime/config-loader.js` binds the pilot id inside every
+  loader transaction with
+  `SELECT set_config('app.pilot_instance_id', $1, true)` (parameter-
+  safe; equivalent to `SET LOCAL`). Tenant-scope RLS narrows every
+  subsequent SELECT. A presence check confirms the env-supplied pilot
+  exists before the four config reads run.
+- `scripts/setup/provision-instance.js` reads `LYLO_SETUP_DATABASE_URL`.
+  `lylo_setup` has `BYPASSRLS` for seeding; the script has no grants
+  on any memory table so a stray write would fail at the GRANT layer.
+- `tests/integration/rls-engagement.test.js` proves the runtime's
+  LOGIN role is denied on memory tables, that tenant-scope narrows
+  reads even though the bootstrap policy permits all
+  `pilot_instances` SELECTs, and that misconfigured provisioning
+  (running the script as `lylo_runtime`) fails closed.
 
-1. Introduce `LYLO_RUNTIME_DATABASE_URL` and `LYLO_SETUP_DATABASE_URL`
-   in `parseEnv`. Operator provisions LOGIN roles whose effective
-   identity is `lylo_runtime` / `lylo_setup`.
-2. Update `src/runtime/boot.js` and `src/db/client.js` so the runtime
-   reads `LYLO_RUNTIME_DATABASE_URL` and `SET LOCAL
-   app.pilot_instance_id` from `LYLO_PILOT_INSTANCE_ID` (env-first)
-   on every loader transaction. The `lylo_runtime` bootstrap policy
-   on `pilot_instances` provides belt-and-suspenders coverage if env
-   is misconfigured.
-3. Update `scripts/setup/provision-instance.js` to read
-   `LYLO_SETUP_DATABASE_URL`. `lylo_setup` has `BYPASSRLS` for seeding.
-4. Add an integration test that boots under `lylo_runtime` and
-   asserts the loader's read-only contract still holds.
-
-Until GM-16 lands, the runtime relies on single-tenant physical
-isolation, the runtime-boundary guard, and the GM-15 migration sitting
-ready in production but not yet engaged by the application.
+Operators provision the LOGIN roles once per cluster — see
+`../deployment/operator-runbook.md` §8 "LOGIN role provisioning". Note
+that `BYPASSRLS` is a Postgres role attribute that does not inherit
+through role membership; the setup LOGIN role must carry it directly,
+the runtime LOGIN role must not.
 
 ## Change control
 
