@@ -8,15 +8,19 @@
  * withMemoryContext catches it and ROLLBACKs both rows (atomicity is
  * the whole point of bundling memory + audit in one transaction).
  *
- * Event vocabulary is application-pinned (the schema's event_type is
- * freeform TEXT). The set below is the GM-17 first surface; future
- * memory-governance ops will append additional events.
+ * GM-18 vocabulary lock (OQ-18.3): `eventType` must be one of the
+ * values in EVENT_TYPES. The schema's `event_type` column is
+ * freeform TEXT, so a typo would otherwise pollute the audit log.
+ * Adding a new event type becomes a deliberate edit to the constants
+ * below.
  */
 
 const EVENT_TYPES = Object.freeze({
   MEMORY_CREATED: 'memory.created',
   MEMORY_LIST: 'memory.list',
 });
+
+const ALLOWED_EVENT_TYPES = new Set(Object.values(EVENT_TYPES));
 
 const OUTCOMES = Object.freeze(['allowed', 'denied', 'masked', 'partial']);
 
@@ -25,8 +29,10 @@ async function insertAuditEvent(client, sessionCtx, fields) {
     throw new Error('insertAuditEvent: fields object is required');
   }
   const { eventType, outcome, targetUserId, memoryId, reason } = fields;
-  if (typeof eventType !== 'string' || eventType.trim() === '') {
-    throw new Error('insertAuditEvent: eventType is required');
+  if (typeof eventType !== 'string' || !ALLOWED_EVENT_TYPES.has(eventType)) {
+    throw new Error(
+      `insertAuditEvent: eventType must be one of ${Array.from(ALLOWED_EVENT_TYPES).join(', ')}`
+    );
   }
   if (!OUTCOMES.includes(outcome)) {
     throw new Error(`insertAuditEvent: outcome must be one of ${OUTCOMES.join(', ')}`);
@@ -48,4 +54,4 @@ async function insertAuditEvent(client, sessionCtx, fields) {
   );
 }
 
-module.exports = { insertAuditEvent, EVENT_TYPES, OUTCOMES };
+module.exports = { insertAuditEvent, EVENT_TYPES, ALLOWED_EVENT_TYPES, OUTCOMES };

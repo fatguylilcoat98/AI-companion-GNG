@@ -12,6 +12,11 @@
  *     are bound inside the transaction.
  *   - lylo_app has no grants on the four config tables nor on users
  *     for write paths; defense in depth for the runtime/memory split.
+ *   - GM-18 (OQ-18.1): callers receive an OPAQUE handle, not the
+ *     pg.Pool itself. The real pool is held in a module-scoped
+ *     WeakMap keyed by the handle. Only `withMemoryContext` (via
+ *     `_resolvePool`) can reach the real pool. A caller cannot call
+ *     `.connect()` on the handle and bypass audit-bundling.
  *
  * Logging mirrors src/db/client.js: a structured (level, event, fields)
  * callback for idle-pool errors so a transient backend failure does
@@ -19,11 +24,22 @@
  */
 
 const { Pool } = require('pg');
+const { describeErrorClass } = require('./errors');
 
-function describeDbError(err) {
-  if (!err) return 'unknown';
-  return err.code || err.name || 'error';
+// Internal handle class. Not exported from src/memory/index.js;
+// constructed only by createMemoryPool. Frozen at construction so a
+// caller cannot monkey-patch a `.connect` method onto it.
+class MemoryPoolHandle {
+  constructor() {
+    Object.freeze(this);
+  }
 }
+
+// Module-scoped WeakMap keyed by handle. The handle itself exposes
+// nothing; the pool is reachable only via `_resolvePool` below, which
+// is consumed by `transaction.js` and never re-exported through
+// `index.js`.
+const POOLS = new WeakMap();
 
 function createMemoryPool(databaseUrl, options) {
   if (!databaseUrl || typeof databaseUrl !== 'string' || databaseUrl.trim() === '') {
@@ -39,13 +55,48 @@ function createMemoryPool(databaseUrl, options) {
     statement_timeout: opts.statementTimeoutMillis || 5000,
   });
   pool.on('error', (err) => {
-    log('error', 'memory.pool.error', { error_class: describeDbError(err) });
+    log('error', 'memory.pool.error', { error_class: describeErrorClass(err) });
   });
-  return pool;
+  const handle = new MemoryPoolHandle();
+  POOLS.set(handle, pool);
+  return handle;
 }
 
-async function closeMemoryPool(pool) {
-  if (pool) await pool.end();
+async function closeMemoryPool(handle) {
+  if (!handle) return;
+  const pool = POOLS.get(handle);
+  if (pool) {
+    POOLS.delete(handle);
+    await pool.end();
+  }
 }
 
-module.exports = { createMemoryPool, closeMemoryPool, describeDbError };
+// Internal — used only by transaction.js. NOT re-exported through
+// src/memory/index.js. Accepts:
+//   - a MemoryPoolHandle (production path) — looks up the real pool.
+//   - any other object with a `.connect` function (test mocks) —
+//     passes through. This is the seam unit tests use; it does not
+//     widen the production surface because callers outside src/memory/
+//     cannot import pg (boundary guard) and cannot construct a
+//     pg-compatible pool literal that would survive the lylo_app
+//     LOGIN role's auth.
+function _resolvePool(handleOrMock) {
+  if (handleOrMock instanceof MemoryPoolHandle) {
+    return POOLS.get(handleOrMock);
+  }
+  if (handleOrMock && typeof handleOrMock.connect === 'function') {
+    return handleOrMock;
+  }
+  return null;
+}
+
+function _isMemoryPoolHandle(value) {
+  return value instanceof MemoryPoolHandle;
+}
+
+module.exports = {
+  createMemoryPool,
+  closeMemoryPool,
+  _resolvePool,
+  _isMemoryPoolHandle,
+};
