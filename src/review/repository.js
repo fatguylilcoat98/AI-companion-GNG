@@ -373,6 +373,132 @@ async function inspectExecutionAuthorization(client, sessionCtx, authorizationId
   return result.rows.length === 0 ? null : result.rows[0];
 }
 
+// ---------------------------------------------------------------------
+// GM-26: execution-claim read + write surface.
+// ---------------------------------------------------------------------
+
+// EXECUTION_SURFACES is the GM-26 locked vocabulary. Every value
+// MUST be `future_*` prefixed — the constitutional discipline that
+// puts "no consumer exists yet" into the data itself. Adding a
+// non-prefixed value fails the H27 prefix-discipline snapshot
+// test in tests/governance/adversarial.test.js. CHECK constraint
+// in db/migrations/011_execution_claims.sql is authoritative.
+const VALID_EXECUTION_SURFACES = new Set([
+  'future_memory_admission_consumer',
+  'future_external_action_consumer',
+  'future_visibility_change_consumer',
+  'future_vault_action_consumer',
+]);
+
+const VALID_CLAIM_ROLES = new Set(['admin']);
+
+// Surface ↔ scope 1:1 mapping. Locked here as JS defense-in-depth
+// for the actor's pre-INSERT check. The DB BEFORE-INSERT trigger
+// is the authoritative wall; this mapping mirrors the trigger's
+// CASE statement.
+const EXECUTION_SURFACE_FOR_SCOPE = Object.freeze({
+  memory_candidate_admission: 'future_memory_admission_consumer',
+  future_external_action:     'future_external_action_consumer',
+  future_visibility_change:   'future_visibility_change_consumer',
+  future_vault_action:        'future_vault_action_consumer',
+});
+
+// recordExecutionClaim — single INSERT into
+// governance_execution_claims. The actor
+// (src/actors/execution-claim-ledger-actor.js) is responsible for
+// the ten-layer Decision verification + admin role check; this
+// function performs vocabulary validation and the INSERT.
+// claimed_by_user_id + pilot_instance_id ALWAYS come from session
+// context — RLS WITH CHECK enforces no-impersonation; the
+// BEFORE-INSERT trigger enforces the five data preconditions
+// (authorization exists, scope equality, self-claim forbidden,
+// surface fits scope, upstream review still approved).
+async function recordExecutionClaim(client, sessionCtx, input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('recordExecutionClaim: input is required');
+  }
+  const { executionAuthorizationId, authorizationScope, executionSurface } = input;
+
+  if (typeof executionAuthorizationId !== 'string' || !UUID_RE.test(executionAuthorizationId)) {
+    throw new Error('recordExecutionClaim: executionAuthorizationId must be a UUID');
+  }
+  if (!VALID_AUTHORIZATION_SCOPES.has(authorizationScope)) {
+    throw new Error(
+      `recordExecutionClaim: authorizationScope must be one of ${Array.from(VALID_AUTHORIZATION_SCOPES).join(', ')}`
+    );
+  }
+  if (!VALID_EXECUTION_SURFACES.has(executionSurface)) {
+    throw new Error(
+      `recordExecutionClaim: executionSurface must be one of ${Array.from(VALID_EXECUTION_SURFACES).join(', ')}`
+    );
+  }
+  if (!VALID_CLAIM_ROLES.has(sessionCtx.userRole)) {
+    throw new Error(
+      `recordExecutionClaim: sessionCtx.userRole must be one of ${Array.from(VALID_CLAIM_ROLES).join(', ')}`
+    );
+  }
+
+  const inserted = await client.query(
+    'INSERT INTO governance_execution_claims '
+      + '(pilot_instance_id, execution_authorization_id, authorization_scope, '
+      + 'execution_surface, claimed_by_user_id, claimed_by_role) '
+      + 'VALUES ($1, $2, $3, $4, $5, $6) '
+      + 'RETURNING id, created_at',
+    [
+      sessionCtx.pilotInstanceId,
+      executionAuthorizationId,
+      authorizationScope,
+      executionSurface,
+      sessionCtx.userId,
+      sessionCtx.userRole,
+    ]
+  );
+
+  return {
+    id: inserted.rows[0].id,
+    created_at: inserted.rows[0].created_at,
+  };
+}
+
+// listExecutionClaims — admin-only listing. RLS narrows by pilot +
+// admin role. Bounded by DEFAULT_LIST_LIMIT / MAX_LIST_LIMIT.
+async function listExecutionClaims(client, sessionCtx, options) {
+  const opts = options || {};
+  const requestedLimit = opts.limit;
+  let limit = DEFAULT_LIST_LIMIT;
+  if (requestedLimit !== undefined) {
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      throw new Error('listExecutionClaims: limit must be a positive integer');
+    }
+    limit = Math.min(requestedLimit, MAX_LIST_LIMIT);
+  }
+  const result = await client.query(
+    'SELECT id, execution_authorization_id, authorization_scope, '
+      + 'execution_surface, claimed_by_user_id, claimed_by_role, created_at '
+      + 'FROM governance_execution_claims '
+      + 'ORDER BY created_at DESC '
+      + 'LIMIT $1',
+    [limit]
+  );
+  return result.rows;
+}
+
+// inspectExecutionClaim — admin-only single-row lookup. Returns
+// null if not visible under the current RLS context.
+async function inspectExecutionClaim(client, sessionCtx, claimId) {
+  if (typeof claimId !== 'string' || !UUID_RE.test(claimId)) {
+    throw new Error('inspectExecutionClaim: claimId must be a UUID');
+  }
+  const result = await client.query(
+    'SELECT id, execution_authorization_id, authorization_scope, '
+      + 'execution_surface, claimed_by_user_id, claimed_by_role, created_at '
+      + 'FROM governance_execution_claims '
+      + 'WHERE id = $1',
+    [claimId]
+  );
+  return result.rows.length === 0 ? null : result.rows[0];
+}
+
 module.exports = {
   stageReviewItem,
   listPendingReviewItems,
@@ -381,6 +507,9 @@ module.exports = {
   recordExecutionAuthorization,
   listExecutionAuthorizations,
   inspectExecutionAuthorization,
+  recordExecutionClaim,
+  listExecutionClaims,
+  inspectExecutionClaim,
   VALID_DECISION_INTENT_TYPES,
   VALID_DECISION_REASONS,
   VALID_PROPOSER_ROLES,
@@ -389,4 +518,7 @@ module.exports = {
   VALID_AUTHORIZATION_SCOPES,
   VALID_AUTHORIZATION_REASONS,
   VALID_AUTHORIZATION_ROLES,
+  VALID_EXECUTION_SURFACES,
+  VALID_CLAIM_ROLES,
+  EXECUTION_SURFACE_FOR_SCOPE,
 };

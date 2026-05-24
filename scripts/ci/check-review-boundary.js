@@ -56,6 +56,7 @@ const SELECT_ALLOWED_TABLES = new Set([
   'governance_review_queue',
   'governance_review_decisions',
   'governance_execution_authorizations',
+  'governance_execution_claims',
   'users',
   'pilot_instances',
 ]);
@@ -64,6 +65,7 @@ const INSERT_ALLOWED_TABLES = new Set([
   'governance_review_queue',
   'governance_review_decisions',
   'governance_execution_authorizations',
+  'governance_execution_claims',
 ]);
 
 // All write/DDL keywords except INSERT (which is permitted but
@@ -188,6 +190,43 @@ for (const rel of files) {
     }
     if (specifier === 'pg' && rel !== PG_ALLOWED_PATH) {
       errors.push(`${rel}: pg may only be imported from ${PG_ALLOWED_PATH}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
+// File-scoped scan (GM-26 OQ-26.14): the execution-claim ledger actor
+// file must not contain operational vocabulary. "Claim is NOT
+// execution; claim is NOT dispatch; claim is NOT completion; claim
+// is NOT success." Mechanically forbidding these identifiers
+// inside that one file prevents the actor from silently acquiring
+// operational meaning.
+//
+// The scan is file-scoped because these identifiers appear
+// legitimately elsewhere (e.g. response-delivery-actor's
+// 'executed' outcome, the OUTCOMES doc comment). Adding them to
+// the module-wide FORBIDDEN_IDENTIFIERS would false-positive.
+// ---------------------------------------------------------------------
+
+const CLAIM_LEDGER_FILE = 'src/actors/execution-claim-ledger-actor.js';
+const CLAIM_LEDGER_FORBIDDEN = [
+  { re: /\bexecuted\b/, label: 'executed (claim is NOT execution)' },
+  { re: /\bcompleted\b/, label: 'completed (claim is NOT completion)' },
+  { re: /\bdispatched\b/, label: 'dispatched (claim is NOT dispatch)' },
+  { re: /\bdelivered\b/, label: 'delivered (claim is NOT delivery)' },
+  { re: /\bfinalized\b/, label: 'finalized (claim is NOT finalization)' },
+  { re: /\bsucceeded\b/, label: 'succeeded (claim is NOT success)' },
+  { re: /\bfailed\b/, label: 'failed (claim records single-consumption, not outcome)' },
+];
+
+if (fs.existsSync(path.join(REPO, CLAIM_LEDGER_FILE))) {
+  const raw = fs.readFileSync(path.join(REPO, CLAIM_LEDGER_FILE), 'utf8');
+  const code = stripComments(raw);
+  for (const { re, label } of CLAIM_LEDGER_FORBIDDEN) {
+    if (re.test(code)) {
+      errors.push(
+        `${CLAIM_LEDGER_FILE}: forbidden operational identifier — ${label}`
+      );
     }
   }
 }

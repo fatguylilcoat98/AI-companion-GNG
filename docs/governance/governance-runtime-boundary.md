@@ -317,6 +317,57 @@ See `execution-authorization-runtime-boundary.md` for the
 substrate contract and `actor-runtime-boundary.md` §4c for the
 actor's verification chain.
 
+## 6e. First single-consumption claim persistence lands (GM-26)
+
+GM-26 introduces `src/actors/execution-claim-ledger-actor.js`
+and extends `src/review/` with three read+write operations
+(`recordExecutionClaim`, `listExecutionClaims`,
+`inspectExecutionClaim`). The substrate
+(`governance_execution_claims`) and the actor together prove the
+next invariant:
+
+> You cannot consume the same authorization twice.
+> `UNIQUE(execution_authorization_id)` is the replay-prevention
+> wall.
+
+This is the single most important structural property GM-26
+adds: **authorization without single-consumption semantics is
+replayable authority**. Before GM-26, the only thing preventing
+a future consumer from acting on the same authorization N times
+was process discipline. GM-26 makes single-consumption a
+structural property of the schema.
+
+GM-26 widens this module **minimally**: exactly one new intent
+type (`INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM`), exactly one
+new reason (`REASONS.EXECUTION_CLAIM_RECORDING_PERMITTED`),
+exactly one new policy-ref entry. The classifier branch returns
+`admissible` unconditionally; role + data preconditions live at
+the actor and DB BEFORE-INSERT trigger.
+
+`EVENT_TYPES` remains unchanged in GM-26 (per OQ-26.8 — the
+claims table IS the artifact). Snapshot tests C2/C3/C4 catch the
+widening at +1 each (REASONS 14 values; INTENT_TYPES 11 values;
+OUTCOMES 7 values). New snapshot H19 + standalone prefix-
+discipline H27 + file-scoped forbidden-vocabulary H28 mechanically
+enforce the GM-26 invariants.
+
+**Constitutional rule** (now applied at four levels):
+> *Approval is not authorization; authorization is not execution;
+> an authorization row is NOT an execution signal; **a claim row
+> is NOT execution — it ONLY means "this authorization has now
+> been consumed exactly once."***
+
+No production code in GM-26 consumes
+`governance_execution_claims` operationally. Adversarial test
+**H22** is a static-scan canary that asserts zero references to
+the new table outside the documented writing path —
+mechanically the defense against any future GM accidentally
+wiring a consumer.
+
+See `execution-claim-runtime-boundary.md` for the substrate
+contract and `actor-runtime-boundary.md` §4d for the actor's
+verification chain.
+
 ## 6a. First actor lands (GM-22)
 
 GM-22 introduces `src/actors/` — the first code outside

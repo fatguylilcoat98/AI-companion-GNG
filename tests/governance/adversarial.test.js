@@ -266,15 +266,11 @@ test('C1. EVENT_TYPES snapshot: the GM-18-locked memory-audit vocabulary is unch
   // they don't go through governance_audit_log.
 });
 
-test('C2. REASONS snapshot: GM-21 vocabulary + GM-24 + GM-25 additions.', () => {
-  // GM-24 added review_decision_recording_permitted; GM-25 adds
-  // execution_authorization_recording_permitted. If a future PR
-  // widens the vocabulary, this snapshot diff catches it and
-  // forces a paired review of the governance + actor +
-  // adversarial-test docs.
+test('C2. REASONS snapshot: GM-21 vocabulary + GM-24 + GM-25 + GM-26 additions.', () => {
   const SNAPSHOT = [
     'ai_inferred_requires_review',
     'execution_authorization_recording_permitted',
+    'execution_claim_recording_permitted',
     'external_side_effects_not_authorized',
     'malformed_intent_payload',
     'response_delivery_permitted',
@@ -292,13 +288,11 @@ test('C2. REASONS snapshot: GM-21 vocabulary + GM-24 + GM-25 additions.', () => 
     'governance REASONS snapshot drifted — adding reasons requires paired updates to docs/governance/');
 });
 
-test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + GM-24 + GM-25 additions.', () => {
-  // GM-24 added governance.review.decide; GM-25 adds
-  // governance.execution.authorize. If a future PR widens the
-  // taxonomy, this snapshot diff catches it.
+test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + GM-24 + GM-25 + GM-26 additions.', () => {
   const SNAPSHOT = [
     'external.side_effect',
     'governance.execution.authorize',
+    'governance.execution.claim',
     'governance.review.decide',
     'memory.candidate.create',
     'memory.retract',
@@ -313,11 +307,11 @@ test('C3. INTENT_TYPES snapshot: GM-21 taxonomy + GM-24 + GM-25 additions.', () 
     'INTENT_TYPES snapshot drifted — adding intent types requires paired updates to docs/governance/');
 });
 
-test('C4. OUTCOMES snapshot: GM-22/23/24 + the GM-25 addition (authorized_recorded).', () => {
-  // GM-25 added exactly one actor outcome. The six-way set is
+test('C4. OUTCOMES snapshot: GM-22/23/24/25 + the GM-26 addition (claim_recorded).', () => {
+  // GM-26 added exactly one actor outcome. The seven-way set is
   // locked here; any future widening must update this snapshot
   // alongside docs/governance/actor-runtime-boundary.md.
-  const SNAPSHOT = ['abstained', 'authorized_recorded', 'executed', 'recorded', 'rejected', 'staged'];
+  const SNAPSHOT = ['abstained', 'authorized_recorded', 'claim_recorded', 'executed', 'recorded', 'rejected', 'staged'];
   const current = Object.values(OUTCOMES).sort();
   assert.deepEqual(current, SNAPSHOT.sort(),
     'actor OUTCOMES snapshot drifted — adding outcomes requires paired updates to actor-runtime-boundary.md');
@@ -977,4 +971,312 @@ test('G13. Static scan: zero references to governance_execution_authorizations o
   assert.deepEqual(leaks, [],
     'GM-25 canary: governance_execution_authorizations referenced outside the writing path — '
     + 'a future consumer may be leaking through. Files with leaks: ' + leaks.join(', '));
+});
+
+// ===================================================================
+// H. GM-26 execution-claim ledger actor adversarial probes
+// ===================================================================
+
+const { createExecutionClaimLedgerActor } = require('../../src/actors');
+const {
+  VALID_EXECUTION_SURFACES: REPO_EXECUTION_SURFACES,
+} = require('../../src/review/repository');
+
+const EXECUTION_AUTHORIZATION_ID = 'cccccccc-1111-1111-1111-cccccccccccc';
+
+function makeMockClaimPool() {
+  const queries = [];
+  let connectCalls = 0;
+  const client = {
+    queries,
+    async query(text) {
+      queries.push(text);
+      if (/RETURNING/i.test(text)) {
+        return { rows: [{ id: 'bbbbbbbb-9999-9999-9999-bbbbbbbbbbbb', created_at: new Date() }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => {},
+  };
+  return {
+    getQueries: () => queries,
+    getConnectCalls: () => connectCalls,
+    connect: async () => { connectCalls += 1; return client; },
+  };
+}
+
+function baseClaimParams() {
+  return {
+    pilotInstanceId: PILOT,
+    userId: ADMIN,
+    userRole: 'admin',
+    executionAuthorizationId: EXECUTION_AUTHORIZATION_ID,
+    authorizationScope: 'memory_candidate_admission',
+    executionSurface: 'future_memory_admission_consumer',
+  };
+}
+
+test('H1. Plain-object Decision to claim-ledger actor → throws (instanceof fails); pool not consulted.', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_CLAIM_RECORDING_PERMITTED,
+    policyRef: 'execution-claim-runtime-boundary.md §3',
+  };
+  await assert.rejects(() => actor.execute(fake, baseClaimParams()), /must be a Decision instance/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H2. Prototype-tampered Decision passes instanceof but isValidDecision rejects → throws.', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_CLAIM_RECORDING_PERMITTED,
+    policyRef: 'execution-claim-runtime-boundary.md §3',
+  };
+  Object.setPrototypeOf(fake, Decision.prototype);
+  Object.freeze(fake);
+  assert.ok(fake instanceof Decision);
+  await assert.rejects(() => actor.execute(fake, baseClaimParams()), /prototype tampering or forgery/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H3. Real Decision with wrong intent type (governance.execution.authorize) → throws (layer-4).', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_AUTHORIZE });
+  await assert.rejects(
+    () => actor.execute(wrong, baseClaimParams()),
+    /decision\.intentType must be "governance\.execution\.claim"/
+  );
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H4. Real Decision with governance.review.decide intent → throws (layer-4).', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_REVIEW_DECIDE });
+  await assert.rejects(() => actor.execute(wrong, baseClaimParams()), /intentType/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H5. Non-admin userRole rejected BEFORE pool.connect.', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM });
+  for (const role of ['senior', 'family', 'caregiver', 'system']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseClaimParams(), userRole: role }),
+      /userRole must be "admin"/,
+      `non-admin role ${role} should be rejected`
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H6. authorizationScope outside locked vocabulary → throws.', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM });
+  for (const bad of ['arbitrary_action', '', 'MEMORY_CANDIDATE_ADMISSION', 'memory_candidate_admission ']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseClaimParams(), authorizationScope: bad }),
+      /authorizationScope must be one of/
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H7. executionSurface outside locked vocabulary → throws.', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM });
+  for (const bad of ['arbitrary_consumer', '', 'FUTURE_MEMORY_ADMISSION_CONSUMER', 'memory_admission_consumer']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseClaimParams(), executionSurface: bad }),
+      /executionSurface must be one of/
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H8. executionAuthorizationId / pilotInstanceId / userId non-UUID → throws BEFORE pool.connect.', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM });
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseClaimParams(), executionAuthorizationId: 'not-uuid' }),
+    /executionAuthorizationId must be a UUID/
+  );
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseClaimParams(), pilotInstanceId: 'x' }),
+    /pilotInstanceId must be a UUID/
+  );
+  await assert.rejects(
+    () => actor.execute(decision, { ...baseClaimParams(), userId: 'y' }),
+    /userId must be a UUID/
+  );
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('H21. Claimant impersonation by input: claimedByUserId in params is silently ignored.', async () => {
+  const pool = makeMockClaimPool();
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM });
+  await actor.execute(
+    decision,
+    Object.assign(baseClaimParams(), { claimedByUserId: '99999999-9999-9999-9999-999999999999' })
+  );
+  // The repository test asserts the parameter binding sources from
+  // sessionCtx, not from input.
+  assert.equal(pool.getConnectCalls(), 1);
+});
+
+test('H14. Sentinel content in unknown params field never appears in captured logs.', async () => {
+  const SENTINEL = 'H14_SECRET_AAA';
+  const pool = makeMockClaimPool();
+  const captured = [];
+  const log = {
+    info(event, fields) {
+      captured.push(JSON.stringify({ ts: 'X', level: 'info', event, pid: 0, ...(fields || {}) }));
+    },
+  };
+  const actor = createExecutionClaimLedgerActor({ reviewQueuePool: pool, log });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM });
+  await actor.execute(
+    decision,
+    Object.assign(baseClaimParams(), { claimerNotes: SENTINEL, payload: SENTINEL })
+  );
+  const text = captured.join('\n');
+  assert.equal(text.includes(SENTINEL), false, 'unknown-field sentinel must not appear in logs');
+  assert.ok(text.includes('actor.execution_claim.recorded'));
+});
+
+test('H15. EVENT_TYPES snapshot still locked — GM-26 added NO new audit event types.', () => {
+  const SNAPSHOT = ['memory.created', 'memory.list'];
+  const current = Object.values(memoryAudit.EVENT_TYPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'GM-26 must not widen memory EVENT_TYPES — the claims table IS the artifact');
+});
+
+test('H19. EXECUTION_SURFACES vocabulary lock: exactly 4 values, all future_* prefixed.', () => {
+  // H19 + H27 combined: the GM-26 prefix-discipline snapshot.
+  // Asserts the set is exactly 4 values AND every value matches
+  // the mandatory /^future_/ prefix.
+  const SNAPSHOT = [
+    'future_external_action_consumer',
+    'future_memory_admission_consumer',
+    'future_vault_action_consumer',
+    'future_visibility_change_consumer',
+  ];
+  const current = Array.from(REPO_EXECUTION_SURFACES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'EXECUTION_SURFACES snapshot drifted — adding values requires paired updates to docs/governance/');
+  assert.equal(current.length, 4, 'EXECUTION_SURFACES must contain exactly 4 values');
+  for (const v of current) {
+    assert.match(v, /^future_/,
+      `EXECUTION_SURFACES value "${v}" must be prefixed with future_ (no consumer exists yet in GM-26)`);
+  }
+});
+
+test('H20. AUTHORIZATION_SCOPES snapshot unchanged by GM-26.', () => {
+  // GM-25 introduced the 4-value AUTHORIZATION_SCOPES set; GM-26
+  // did NOT widen it. Snapshot here mirrors GM-25's lock.
+  const {
+    VALID_AUTHORIZATION_SCOPES,
+  } = require('../../src/review/repository');
+  const SNAPSHOT = [
+    'future_external_action',
+    'future_visibility_change',
+    'future_vault_action',
+    'memory_candidate_admission',
+  ];
+  const current = Array.from(VALID_AUTHORIZATION_SCOPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'AUTHORIZATION_SCOPES snapshot drifted — GM-26 must not widen the GM-25 vocabulary');
+});
+
+test('H22. Static scan: zero references to governance_execution_claims outside the writing path.', () => {
+  // The H-series canary: greps src/ and scripts/ci for the table
+  // name and asserts the count matches the known writing-path
+  // files. Any additional reference is a potential consumer leak.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const WRITING_PATH = new Set([
+    'src/review/repository.js',
+    'src/review/transaction.js',
+    'src/review/index.js',
+    'src/actors/execution-claim-ledger-actor.js',
+    'src/actors/outcomes.js',
+    'src/actors/index.js',
+    'scripts/ci/check-review-boundary.js',
+  ]);
+  function walk(rel, out) {
+    const abs = path.join(REPO, rel);
+    if (!fs.existsSync(abs)) return;
+    const st = fs.statSync(abs);
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(abs)) walk(`${rel}/${name}`, out);
+    } else if (rel.endsWith('.js')) {
+      out.push(rel);
+    }
+  }
+  const files = [];
+  for (const root of ['src', 'scripts/ci']) walk(root, files);
+  const leaks = [];
+  for (const rel of files) {
+    const content = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    if (content.includes('governance_execution_claims') && !WRITING_PATH.has(rel)) {
+      leaks.push(rel);
+    }
+  }
+  assert.deepEqual(leaks, [],
+    'GM-26 canary: governance_execution_claims referenced outside the writing path — '
+    + 'a future consumer may be leaking through. Files with leaks: ' + leaks.join(', '));
+});
+
+test('H27. EXECUTION_SURFACES prefix discipline (snapshot enforcement).', () => {
+  // Per OQ-26.7: explicit assertion that every EXECUTION_SURFACES
+  // value matches the mandatory /^future_/ prefix. Same set as
+  // H19's snapshot; this test is the standalone prefix-discipline
+  // canary that fails immediately if anyone adds a non-prefixed
+  // value (e.g. "memory_admission_consumer" without the future_
+  // prefix).
+  for (const v of REPO_EXECUTION_SURFACES) {
+    assert.match(v, /^future_/,
+      `H27: EXECUTION_SURFACES value "${v}" must be future_* prefixed `
+      + '(GM-26 ships zero consumers; the prefix puts that fact into the data)');
+  }
+});
+
+test('H28. File-scoped forbidden-vocabulary scan: execution-claim-ledger actor must not contain operational words.', () => {
+  // Per OQ-26.14: the claim-ledger actor file must not contain
+  // 'executed', 'completed', 'dispatched', 'delivered',
+  // 'finalized', 'succeeded', 'failed' as bare identifiers
+  // (after stripping comments). The boundary guard enforces this
+  // mechanically in CI; this test re-asserts the property at the
+  // adversarial-suite layer.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const filePath = path.join(REPO, 'src/actors/execution-claim-ledger-actor.js');
+  const raw = fs.readFileSync(filePath, 'utf8');
+  // Strip /* */ and // comments before scanning — the actor
+  // legitimately references some of these words in its doc
+  // header (e.g. "NOT execution"); they don't count.
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const FORBIDDEN = ['executed', 'completed', 'dispatched', 'delivered', 'finalized', 'succeeded', 'failed'];
+  const hits = [];
+  for (const word of FORBIDDEN) {
+    const re = new RegExp(`\\b${word}\\b`);
+    if (re.test(code)) hits.push(word);
+  }
+  assert.deepEqual(hits, [],
+    `H28: execution-claim-ledger actor contains forbidden operational vocabulary: ${hits.join(', ')}. `
+    + 'Claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success.');
 });

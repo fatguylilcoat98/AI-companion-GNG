@@ -79,7 +79,7 @@ and may extend the boundary guard's allowed-import list (e.g. to
 permit `../memory` entry imports). Every such extension is a
 deliberate boundary change.
 
-## 2. Public API surface (GM-22 + GM-23 + GM-24 + GM-25)
+## 2. Public API surface (GM-22 through GM-26)
 
 | Export | Purpose |
 |---|---|
@@ -87,7 +87,8 @@ deliberate boundary change.
 | `createReviewQueueActor({reviewQueuePool, log?})` | GM-23. Stages `requires_review` Decisions into `governance_review_queue`. |
 | `createReviewDecisionActor({reviewQueuePool, log?})` | GM-24. Records a human admin's review outcome (`approved` \| `rejected`) against a pending queue item, into `governance_review_decisions`. **Admin role only.** Recording is NOT execution; approval is NOT authorization. |
 | `createExecutionAuthorizationActor({reviewQueuePool, log?})` | GM-25. Records an admin's explicit authorization against an approved review_decision, into `governance_execution_authorizations`. **Admin role only**; **authorizer ≠ reviewer**; **scope must match underlying intent type**; review must be **approved**. Authorization is NOT execution; an authorization row is NOT an execution signal. |
-| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED, AUTHORIZED_RECORDED}` enum. `AUTHORIZED_RECORDED` is the GM-25 addition; the six-way set is snapshot-locked in the adversarial suite (C4). |
+| `createExecutionClaimLedgerActor({reviewQueuePool, log?})` | GM-26. Records an admin's explicit single-consumption claim of an authorization for a specific future execution surface, into `governance_execution_claims`. **Admin role only**; **claimant ≠ authorizer**; **scope equality with authorization**; **surface ↔ scope 1:1 mapping**; underlying review must still be **approved**. `UNIQUE(execution_authorization_id)` is the **replay-prevention wall**. Claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success. |
+| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED, AUTHORIZED_RECORDED, CLAIM_RECORDED}` enum. `CLAIM_RECORDED` is the GM-26 addition; the seven-way set is snapshot-locked in the adversarial suite (C4). |
 
 Internal helpers (`verifyDecisionOrThrow`, `validateParams`,
 `isConversationRuntime`, `isReviewQueuePool`) are NOT re-exported
@@ -252,6 +253,60 @@ authorization row is NOT an execution signal.*
 
 See `execution-authorization-runtime-boundary.md` for the full
 substrate contract.
+
+### 4d. The execution-claim-ledger actor (GM-26) — ten-layer chain + dual vocabulary locks
+
+The execution-claim-ledger actor extends the chain with two new
+actor-specific vocabulary locks and a different layer-4 intent
+lock:
+
+| # | Check | Catches |
+|---|---|---|
+| 4 | `decision.intentType === INTENT_TYPES.GOVERNANCE_EXECUTION_CLAIM` | Wrong intent type |
+| 7 | `params.userRole === 'admin'` | Non-admin |
+| 8 | `params.authorizationScope ∈ AUTHORIZATION_SCOPES` (GM-25 vocab) | Vocab |
+| 9 | `params.executionSurface ∈ EXECUTION_SURFACES` (GM-26 vocab, all `future_*` prefixed) | Vocab |
+| 10 | UUID validation on `pilotInstanceId` / `userId` / `executionAuthorizationId` | Structural |
+
+The **five DB-side data preconditions** (authorization exists in
+same pilot; scope equality; claimant ≠ authorizer; surface fits
+scope per the 1:1 mapping; underlying review still approved) are
+NOT duplicated at the actor — they live in the BEFORE-INSERT
+trigger on `governance_execution_claims`.
+
+Outcome routing:
+
+| Conditions | Action | Outcome shape |
+|---|---|---|
+| All ten layers pass + DB trigger passes + UNIQUE not violated | One INSERT into `governance_execution_claims` via `withReviewContext` | `{outcome: 'claim_recorded', decision, claimId, createdAt}` |
+| Any actor-layer failure | THROW (before any DB call) | — |
+| DB trigger raises (incl. UNIQUE violation on replay) | THROW (wrapped in `ReviewRepositoryError`) | — |
+
+The substrate has **no consumer** in GM-26. The
+`OUTCOMES.CLAIM_RECORDED` value names the act of recording a
+claim — it is **not** a signal to execute. Two adversarial
+canaries enforce the inertness mechanically:
+
+- **H22 — static-scan canary:** asserts zero references to
+  `governance_execution_claims` outside the documented writing
+  path. Fails the build if any future GM accidentally
+  introduces a consumer.
+- **H28 — file-scoped forbidden-vocabulary scan:** asserts
+  the claim-ledger actor file contains none of `executed`,
+  `completed`, `dispatched`, `delivered`, `finalized`,
+  `succeeded`, `failed` as bare identifiers (per OQ-26.14).
+  Mirrors the boundary-guard mechanical enforcement.
+
+**The constitutional rule (extended at GM-26):** *approval is
+not authorization; authorization is not execution; an
+authorization row is NOT an execution signal; **a claim row is
+NOT execution — it ONLY means "this authorization has now been
+consumed exactly once."***
+
+The actor filename includes "ledger" (per OQ-26.13) to make the
+read-only / record-only nature visible at the file level. See
+`execution-claim-runtime-boundary.md` for the full substrate
+contract.
 
 ## 5. The conversation runtime is unchanged
 
