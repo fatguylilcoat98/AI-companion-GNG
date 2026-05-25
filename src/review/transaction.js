@@ -66,6 +66,9 @@ const {
   recordExecutionAttempt,
   listExecutionAttempts,
   inspectExecutionAttempt,
+  recordExecutionOutcome,
+  listExecutionOutcomes,
+  inspectExecutionOutcome,
 } = require('./repository');
 
 function buildCtx(client, sessionCtx) {
@@ -99,6 +102,13 @@ function buildCtx(client, sessionCtx) {
       listExecutionAttempts(client, sessionCtx, options),
     inspectExecutionAttempt: (attemptId) =>
       inspectExecutionAttempt(client, sessionCtx, attemptId),
+    // GM-28: reported-outcome read + write.
+    recordExecutionOutcome: (input) =>
+      recordExecutionOutcome(client, sessionCtx, input),
+    listExecutionOutcomes: (options) =>
+      listExecutionOutcomes(client, sessionCtx, options),
+    inspectExecutionOutcome: (outcomeId) =>
+      inspectExecutionOutcome(client, sessionCtx, outcomeId),
   };
 }
 

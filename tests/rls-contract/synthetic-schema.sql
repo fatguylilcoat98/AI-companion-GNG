@@ -319,3 +319,43 @@ CREATE TABLE governance_execution_attempts (
   FOREIGN KEY (pilot_instance_id, execution_claim_id)
     REFERENCES governance_execution_claims (pilot_instance_id, id)
 );
+
+-- GM-28: the reported-outcome substrate. Structural mirror of
+-- db/migrations/013_execution_outcomes.sql, MINUS the append-only
+-- and preconditions BEFORE-INSERT triggers.
+CREATE TABLE governance_execution_outcomes (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pilot_instance_id        UUID NOT NULL REFERENCES pilot_instances(id),
+  execution_attempt_id     UUID NOT NULL,
+  authorization_scope      TEXT NOT NULL
+    CHECK (authorization_scope IN (
+      'memory_candidate_admission',
+      'future_external_action',
+      'future_visibility_change',
+      'future_vault_action'
+    )),
+  execution_surface        TEXT NOT NULL
+    CHECK (execution_surface IN (
+      'future_memory_admission_consumer',
+      'future_external_action_consumer',
+      'future_visibility_change_consumer',
+      'future_vault_action_consumer'
+    )),
+  outcome_type             TEXT NOT NULL
+    CHECK (outcome_type IN (
+      'reported_completed',
+      'reported_interrupted',
+      'reported_abandoned',
+      'reported_unknown'
+    )),
+  recorded_by_user_id      UUID NOT NULL,
+  recorded_by_role         TEXT NOT NULL
+    CHECK (recorded_by_role = 'admin'),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (execution_attempt_id),
+  UNIQUE (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, recorded_by_user_id)
+    REFERENCES users (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, execution_attempt_id)
+    REFERENCES governance_execution_attempts (pilot_instance_id, id)
+);

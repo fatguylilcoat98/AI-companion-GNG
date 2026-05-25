@@ -74,6 +74,13 @@ const REASONS = Object.freeze({
   // attempt; outcome/success/failure semantics are deferred to a
   // future GM.
   EXECUTION_ATTEMPT_RECORDING_PERMITTED: 'execution_attempt_recording_permitted',
+  // GM-28: the classifier admits GOVERNANCE_EXECUTION_OUTCOME_RECORD
+  // intents so the execution-outcome-ledger actor has a Decision
+  // to verify. Same posture — role + data preconditions enforced
+  // at the actor + DB trigger. The outcome artifact records only
+  // a REPORTED observation; truth claims, verification, and
+  // reconciliation are explicitly deferred.
+  EXECUTION_OUTCOME_RECORDING_PERMITTED: 'execution_outcome_recording_permitted',
 });
 
 const ALL_REASONS = new Set(Object.values(REASONS));
@@ -112,6 +119,8 @@ const POLICY_REFS = Object.freeze({
     'execution-claim-runtime-boundary.md §3',
   [REASONS.EXECUTION_ATTEMPT_RECORDING_PERMITTED]:
     'execution-attempt-runtime-boundary.md §3',
+  [REASONS.EXECUTION_OUTCOME_RECORDING_PERMITTED]:
+    'execution-outcome-runtime-boundary.md §3',
 });
 
 // Module-private token. External code cannot reach this Symbol —

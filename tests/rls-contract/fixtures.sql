@@ -28,7 +28,13 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   -- with attempter != claimant (admin3-A claims; admin4-A
   -- attempts). Adjacent-only separation-of-duties chain extends
   -- one more stage.
-  ('aaaaaaaa-7777-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin4-A',     'admin');
+  ('aaaaaaaa-7777-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin4-A',     'admin'),
+  -- GM-28: fifth admin per pilot so outcome rows can be seeded
+  -- with recorder != attempter (admin4-A attempts; admin5-A
+  -- records the observed outcome). Adjacent-only separation-of-
+  -- duties chain extends one more stage (now 5 deep:
+  -- reviewer ≠ authorizer ≠ claimant ≠ attempter ≠ recorder).
+  ('aaaaaaaa-8888-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin5-A',     'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('11111111-1111-1111-1111-111111111111', 'Aria', '{"tone":"warm"}'::jsonb);
@@ -137,7 +143,10 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   ('bbbbbbbb-6666-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin3-B', 'admin'),
   -- GM-27: fourth admin per pilot (see comment in Pilot A users
   -- block above).
-  ('bbbbbbbb-7777-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin4-B', 'admin');
+  ('bbbbbbbb-7777-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin4-B', 'admin'),
+  -- GM-28: fifth admin per pilot (see comment in Pilot A users
+  -- block above).
+  ('bbbbbbbb-8888-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin5-B', 'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('22222222-2222-2222-2222-222222222222', 'Bram', '{"tone":"steady"}'::jsonb);
@@ -348,4 +357,30 @@ INSERT INTO governance_execution_attempts
    'memory_candidate_admission',
    'future_memory_admission_consumer',
    'bbbbbbbb-7777-2222-2222-bbbbbbbbbbbb',
+   'admin');
+
+-- GM-28: reported-outcome rows. recorder (admin5) != attempter
+-- (admin4). authorization_scope and execution_surface MUST equal
+-- the attempt's values (DB trigger asserts equality).
+-- outcome_type uses the locked reported_* vocabulary —
+-- observational, not evaluative.
+INSERT INTO governance_execution_outcomes
+  (id, pilot_instance_id, execution_attempt_id,
+   authorization_scope, execution_surface, outcome_type,
+   recorded_by_user_id, recorded_by_role) VALUES
+  ('aaaaaaaa-9999-1111-1111-e00000000001',
+   '11111111-1111-1111-1111-111111111111',
+   'aaaaaaaa-aaaa-1111-1111-c00000000001',
+   'memory_candidate_admission',
+   'future_memory_admission_consumer',
+   'reported_completed',
+   'aaaaaaaa-8888-1111-1111-aaaaaaaaaaaa',
+   'admin'),
+  ('bbbbbbbb-9999-2222-2222-f00000000001',
+   '22222222-2222-2222-2222-222222222222',
+   'bbbbbbbb-aaaa-2222-2222-d00000000001',
+   'memory_candidate_admission',
+   'future_memory_admission_consumer',
+   'reported_unknown',
+   'bbbbbbbb-8888-2222-2222-bbbbbbbbbbbb',
    'admin');

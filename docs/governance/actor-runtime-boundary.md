@@ -79,7 +79,7 @@ and may extend the boundary guard's allowed-import list (e.g. to
 permit `../memory` entry imports). Every such extension is a
 deliberate boundary change.
 
-## 2. Public API surface (GM-22 through GM-27)
+## 2. Public API surface (GM-22 through GM-28)
 
 | Export | Purpose |
 |---|---|
@@ -89,7 +89,8 @@ deliberate boundary change.
 | `createExecutionAuthorizationActor({reviewQueuePool, log?})` | GM-25. Records an admin's explicit authorization against an approved review_decision, into `governance_execution_authorizations`. **Admin role only**; **authorizer ≠ reviewer**; **scope must match underlying intent type**; review must be **approved**. Authorization is NOT execution; an authorization row is NOT an execution signal. |
 | `createExecutionClaimLedgerActor({reviewQueuePool, log?})` | GM-26. Records an admin's explicit single-consumption claim of an authorization for a specific future execution surface, into `governance_execution_claims`. **Admin role only**; **claimant ≠ authorizer**; **scope equality with authorization**; **surface ↔ scope 1:1 mapping**; underlying review must still be **approved**. `UNIQUE(execution_authorization_id)` is the **replay-prevention wall**. Claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success. |
 | `createExecutionAttemptLedgerActor({reviewQueuePool, log?})` | GM-27. Records that an admin BEGAN an execution attempt against a claim, into `governance_execution_attempts`. **Admin role only**; **attempter ≠ claimant**; **scope equality with claim**; **surface equality with claim**; underlying review must still be **approved**. `UNIQUE(execution_claim_id)` forbids retry / multi-attempt. **ATTEMPT IS NOT OUTCOME** — records ONLY the beginning of an attempt; never success, failure, completion, interruption, delivery, dispatch, finalization, or commit. |
-| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED, AUTHORIZED_RECORDED, CLAIM_RECORDED, ATTEMPT_RECORDED}` enum. `ATTEMPT_RECORDED` is the GM-27 addition; the eight-way set is snapshot-locked in the adversarial suite (C4). |
+| `createExecutionOutcomeLedgerActor({reviewQueuePool, log?})` | GM-28. Records that an admin OBSERVED an apparent end state for a recorded attempt, into `governance_execution_outcomes`. **Admin role only**; **recorder ≠ attempter**; **scope equality with attempt**; **surface equality with attempt**; underlying review must still be **approved**. `UNIQUE(execution_attempt_id)` forbids replay. `outcome_type` is CHECK-locked to the 4 `reported_*` values. **AN OUTCOME ROW IS NOT TRUTH** — `reported_completed` ≠ `verified_completed`; the `reported_*` prefix is a constitutional defense, not a naming convention. Outcomes are OPTIONAL; absence is NOT itself an outcome. |
+| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED, AUTHORIZED_RECORDED, CLAIM_RECORDED, ATTEMPT_RECORDED, OUTCOME_RECORDED}` enum. `OUTCOME_RECORDED` is the GM-28 addition; the nine-way set is snapshot-locked in the adversarial suite (C4). |
 
 Internal helpers (`verifyDecisionOrThrow`, `validateParams`,
 `isConversationRuntime`, `isReviewQueuePool`) are NOT re-exported
@@ -373,6 +374,82 @@ substrate contract, including the eight-question "What remains
 unresolved" enumeration that the future-outcome GM must
 explicitly address.
 
+### 4f. The execution-outcome-ledger actor (GM-28) — ten-layer chain + triple vocabulary locks + the strictest forbidden-words list in the substrate
+
+The execution-outcome-ledger actor mirrors GM-27's structural
+shape but with the strictest operational AND truth-claim
+vocabulary discipline anywhere in the substrate. The actor file
+is mechanically forbidden by the boundary guard from containing
+any of GM-27's 8 outcome-implying words (`executed`,
+`completed`, `dispatched`, `delivered`, `finalized`,
+`succeeded`, `failed`, `committed`) PLUS 10 NEW truth-claim
+words (`verified`, `confirmed`, `actual`, `actually`,
+`definitely`, `proven`, `certain`, `real`, `reality`, `truth`)
+as bare identifiers. The list is **18 words — strictest in the
+substrate**.
+
+Verification chain:
+
+| # | Check | Catches |
+|---|---|---|
+| 4 | `decision.intentType === INTENT_TYPES.GOVERNANCE_EXECUTION_OUTCOME_RECORD` | Wrong intent type |
+| 7 | `params.userRole === 'admin'` | Non-admin |
+| 8 | `params.authorizationScope ∈ AUTHORIZATION_SCOPES` (from GM-25) | Vocab |
+| 9 | `params.executionSurface ∈ EXECUTION_SURFACES` (from GM-26, all `future_*`) | Vocab |
+| 10 | UUID validation on `pilotInstanceId` / `userId` / `executionAttemptId` | Structural |
+
+Plus a vocabulary precondition: `params.outcomeType ∈
+VALID_EXECUTION_OUTCOME_TYPES` (the 4-value `reported_*` set).
+The actor rejects `reported_succeeded`, `reported_failed`,
+`verified_completed`, the uppercase variants, and every other
+smuggled value BEFORE opening a connection.
+
+The **five DB-side data preconditions** (attempt exists in same
+pilot; scope equality with attempt; surface equality with
+attempt; recorder ≠ attempter; 6-deep chain walks to
+`review_outcome = 'approved'`) are NOT duplicated at the actor
+— they live in the BEFORE-INSERT trigger.
+
+Outcome routing:
+
+| Conditions | Action | Outcome shape |
+|---|---|---|
+| All ten layers + vocabulary precondition pass + DB trigger passes + UNIQUE not violated | One INSERT into `governance_execution_outcomes` via `withReviewContext` | `{outcome: 'outcome_recorded', decision, outcomeId, createdAt}` |
+| Any actor-layer failure | THROW (before any DB call) | — |
+| DB trigger, CHECK, or UNIQUE raises | THROW (wrapped in `ReviewRepositoryError`) | — |
+
+The substrate has **no consumer** in GM-28. The
+`OUTCOMES.OUTCOME_RECORDED` value names the act of recording a
+human's observation — it does **not** mean anything happened,
+was verified, was true, or had any actual effect. Four
+adversarial canaries enforce the inertness mechanically:
+
+- **J22 — static-scan canary**: asserts zero references to
+  `governance_execution_outcomes` outside the documented
+  writing path.
+- **J24 — file-scoped forbidden-vocabulary scan**: asserts the
+  actor file contains none of the 18 forbidden words above.
+- **J27 — doc-presence canary**: asserts the boundary doc
+  retains both "What this is NOT" and "What remains unresolved"
+  sections (defends the future-verification GM against silent
+  removal of the phantom-outcome warning).
+- **J37 — `EXECUTION_OUTCOME_TYPES` snapshot**: exactly 4
+  values, all `reported_*` prefixed. Adding `reported_succeeded`
+  or `verified_completed` fails immediately.
+
+**The constitutional rule (extended at GM-28, now at six
+levels):** *approval is not authorization; authorization is not
+execution; an authorization row is NOT an execution signal; a
+claim row is NOT execution — it only records single-consumption;
+an attempt row is NOT an outcome — it only records the beginning
+of an attempt; **an outcome row is NOT truth — it only records
+what a human reported observing.***
+
+See `execution-outcome-runtime-boundary.md` for the full
+substrate contract, including the ten-question "What remains
+unresolved" enumeration that the future-verification GM must
+explicitly address.
+
 ## 5. The conversation runtime is unchanged
 
 GM-22 does NOT modify `src/conversation/`. Direct callers of
@@ -533,5 +610,7 @@ AND the adversarial snapshot.
   GM-22 positive contract tests.
 - `../../tests/actors/review-queue-actor.test.js` — the GM-23
   positive contract tests.
+- `../../tests/actors/execution-outcome-ledger-actor.test.js` —
+  the GM-28 positive contract tests.
 - `../../tests/governance/adversarial.test.js` — the negative
-  contract tests (A–E series).
+  contract tests (A–J series; J22/J24/J27/J37 lock GM-28).

@@ -631,6 +631,139 @@ async function inspectExecutionAttempt(client, sessionCtx, attemptId) {
   return result.rows.length === 0 ? null : result.rows[0];
 }
 
+// ---------------------------------------------------------------------
+// GM-28: reported-outcome read + write surface.
+// ---------------------------------------------------------------------
+//
+// Constitutional rule (the strictest in the substrate):
+//
+//   AN OUTCOME ROW IS NOT TRUTH.
+//   `reported_completed` ≠ `verified_completed`.
+//   `reported_unknown` is active epistemic uncertainty, NOT a
+//   default filler state.
+//
+// VALID_EXECUTION_OUTCOME_TYPES is the GM-28 locked vocabulary.
+// EVERY value MUST be `reported_*` prefixed. The 4 values are
+// observational, not evaluative — `reported_succeeded` and
+// `reported_failed` are deliberately ABSENT because they would
+// smuggle truth claims under the prefix.
+//
+// Adding a non-`reported_*` value (or adding a 5th value) fails
+// the J37 snapshot test in tests/governance/adversarial.test.js.
+// CHECK constraint in db/migrations/013_execution_outcomes.sql
+// is authoritative.
+
+const VALID_EXECUTION_OUTCOME_TYPES = new Set([
+  'reported_completed',
+  'reported_interrupted',
+  'reported_abandoned',
+  'reported_unknown',
+]);
+
+const VALID_RECORDER_ROLES = new Set(['admin']);
+
+// recordExecutionOutcome — single INSERT into
+// governance_execution_outcomes. The actor
+// (src/actors/execution-outcome-ledger-actor.js) is responsible
+// for the ten-layer Decision verification + admin role check;
+// this function performs vocabulary validation and the INSERT.
+// recorded_by_user_id + pilot_instance_id ALWAYS come from
+// session context — RLS WITH CHECK enforces no-impersonation;
+// the BEFORE-INSERT trigger enforces the five data preconditions
+// (attempt exists, scope equality, surface equality, self-
+// recording forbidden, upstream chain resolves to approved).
+async function recordExecutionOutcome(client, sessionCtx, input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('recordExecutionOutcome: input is required');
+  }
+  const { executionAttemptId, authorizationScope, executionSurface, outcomeType } = input;
+
+  if (typeof executionAttemptId !== 'string' || !UUID_RE.test(executionAttemptId)) {
+    throw new Error('recordExecutionOutcome: executionAttemptId must be a UUID');
+  }
+  if (!VALID_AUTHORIZATION_SCOPES.has(authorizationScope)) {
+    throw new Error(
+      `recordExecutionOutcome: authorizationScope must be one of ${Array.from(VALID_AUTHORIZATION_SCOPES).join(', ')}`
+    );
+  }
+  if (!VALID_EXECUTION_SURFACES.has(executionSurface)) {
+    throw new Error(
+      `recordExecutionOutcome: executionSurface must be one of ${Array.from(VALID_EXECUTION_SURFACES).join(', ')}`
+    );
+  }
+  if (!VALID_EXECUTION_OUTCOME_TYPES.has(outcomeType)) {
+    throw new Error(
+      `recordExecutionOutcome: outcomeType must be one of ${Array.from(VALID_EXECUTION_OUTCOME_TYPES).join(', ')}`
+    );
+  }
+  if (!VALID_RECORDER_ROLES.has(sessionCtx.userRole)) {
+    throw new Error(
+      `recordExecutionOutcome: sessionCtx.userRole must be one of ${Array.from(VALID_RECORDER_ROLES).join(', ')}`
+    );
+  }
+
+  const inserted = await client.query(
+    'INSERT INTO governance_execution_outcomes '
+      + '(pilot_instance_id, execution_attempt_id, authorization_scope, '
+      + 'execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
+      + 'VALUES ($1, $2, $3, $4, $5, $6, $7) '
+      + 'RETURNING id, created_at',
+    [
+      sessionCtx.pilotInstanceId,
+      executionAttemptId,
+      authorizationScope,
+      executionSurface,
+      outcomeType,
+      sessionCtx.userId,
+      sessionCtx.userRole,
+    ]
+  );
+
+  return {
+    id: inserted.rows[0].id,
+    created_at: inserted.rows[0].created_at,
+  };
+}
+
+// listExecutionOutcomes — admin-only listing. RLS narrows by
+// pilot + admin role. Bounded by DEFAULT_LIST_LIMIT /
+// MAX_LIST_LIMIT.
+async function listExecutionOutcomes(client, sessionCtx, options) {
+  const opts = options || {};
+  const requestedLimit = opts.limit;
+  let limit = DEFAULT_LIST_LIMIT;
+  if (requestedLimit !== undefined) {
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      throw new Error('listExecutionOutcomes: limit must be a positive integer');
+    }
+    limit = Math.min(requestedLimit, MAX_LIST_LIMIT);
+  }
+  const result = await client.query(
+    'SELECT id, execution_attempt_id, authorization_scope, execution_surface, '
+      + 'outcome_type, recorded_by_user_id, recorded_by_role, created_at '
+      + 'FROM governance_execution_outcomes '
+      + 'ORDER BY created_at DESC '
+      + 'LIMIT $1',
+    [limit]
+  );
+  return result.rows;
+}
+
+// inspectExecutionOutcome — admin-only single-row lookup.
+async function inspectExecutionOutcome(client, sessionCtx, outcomeId) {
+  if (typeof outcomeId !== 'string' || !UUID_RE.test(outcomeId)) {
+    throw new Error('inspectExecutionOutcome: outcomeId must be a UUID');
+  }
+  const result = await client.query(
+    'SELECT id, execution_attempt_id, authorization_scope, execution_surface, '
+      + 'outcome_type, recorded_by_user_id, recorded_by_role, created_at '
+      + 'FROM governance_execution_outcomes '
+      + 'WHERE id = $1',
+    [outcomeId]
+  );
+  return result.rows.length === 0 ? null : result.rows[0];
+}
+
 module.exports = {
   stageReviewItem,
   listPendingReviewItems,
@@ -645,6 +778,9 @@ module.exports = {
   recordExecutionAttempt,
   listExecutionAttempts,
   inspectExecutionAttempt,
+  recordExecutionOutcome,
+  listExecutionOutcomes,
+  inspectExecutionOutcome,
   VALID_DECISION_INTENT_TYPES,
   VALID_DECISION_REASONS,
   VALID_PROPOSER_ROLES,
@@ -656,4 +792,6 @@ module.exports = {
   VALID_EXECUTION_SURFACES,
   VALID_CLAIM_ROLES,
   EXECUTION_SURFACE_FOR_SCOPE,
+  VALID_EXECUTION_OUTCOME_TYPES,
+  VALID_RECORDER_ROLES,
 };

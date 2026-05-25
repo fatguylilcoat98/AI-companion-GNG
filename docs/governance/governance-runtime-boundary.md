@@ -421,6 +421,86 @@ See `execution-attempt-runtime-boundary.md` for the substrate
 contract and `actor-runtime-boundary.md` §4e for the actor's
 verification chain.
 
+## 6g. First reported-outcome persistence lands (GM-28)
+
+GM-28 introduces `src/actors/execution-outcome-ledger-actor.js`
+and extends `src/review/` with three read+write operations
+(`recordExecutionOutcome`, `listExecutionOutcomes`,
+`inspectExecutionOutcome`). The substrate
+(`governance_execution_outcomes`) and the actor together prove
+the next invariant:
+
+> AN OUTCOME ROW IS NOT TRUTH.
+
+This is the FIRST artifact in the chain that names an apparent
+end state for an attempt — and deliberately stops short of
+saying whether what was reported corresponds to anything that
+actually occurred. An outcome row records ONLY what a human
+reported observing. `reported_completed` ≠ `verified_completed`;
+the `reported_*` prefix is a constitutional boundary, not a
+naming style.
+
+`outcome_type` is locked at three independent layers (Set in
+`src/review/repository.js`; DB CHECK in
+`db/migrations/013_execution_outcomes.sql`; J37 snapshot in
+`tests/governance/adversarial.test.js`) to exactly four
+observational values: `reported_completed`,
+`reported_interrupted`, `reported_abandoned`, `reported_unknown`.
+`reported_succeeded` / `reported_failed` are deliberately
+excluded — success and failure are truth claims, and the
+truth-claim ring is a separate future GM with its own gate.
+
+Outcomes are also OPTIONAL. An attempt may exist forever with no
+outcome row, and **the absence of an outcome row is NOT itself
+an outcome**. Any policy that interprets absence is OUTSIDE the
+GM-28 contract.
+
+The future-verification GM will need a substrate that records
+verification semantics. GM-28 deliberately does not pre-decide
+ten unresolved questions enumerated in
+`docs/governance/execution-outcome-runtime-boundary.md` "What
+remains unresolved" (verification ring, missing-outcome
+semantics, time windows, disagreeing observations, reconciliation
+with external state, aggregate use, backfill of pre-GM-28
+attempts, pre-verification-GM rows, outcome revisions, privacy
+boundary). The J27 doc-presence canary asserts that section
+remains in the doc so the warning cannot be silently removed.
+
+GM-28 widens this module minimally: exactly one new intent type
+(`INTENT_TYPES.GOVERNANCE_EXECUTION_OUTCOME_RECORD`), exactly
+one new reason (`REASONS.EXECUTION_OUTCOME_RECORDING_PERMITTED`),
+exactly one new POLICY_REFS entry. `EVENT_TYPES` remains
+unchanged (per OQ-28.7 — the outcomes table IS the artifact).
+Snapshot tests C2/C3/C4 catch the widening at +1 each (REASONS
+16 values; INTENT_TYPES 13 values; OUTCOMES 9 values). J37
+locks `EXECUTION_OUTCOME_TYPES` at exactly 4 `reported_*`
+values.
+
+**Constitutional rule** (now at six levels):
+> *Approval is not authorization; authorization is not execution;
+> an authorization row is NOT an execution signal; a claim row
+> is NOT execution — it only records single-consumption;
+> an attempt row is NOT an outcome — it only records the
+> beginning of an attempt; **an outcome row is NOT truth — it
+> only records what a human reported observing.***
+
+Four adversarial canaries protect GM-28's invariants:
+- **J22**: static scan asserting zero references to
+  `governance_execution_outcomes` outside the writing path.
+- **J24**: file-scoped forbidden-vocabulary scan — strictest in
+  the substrate (18 words: GM-27's 8 outcome-implying words plus
+  10 truth-claim words: `verified`, `confirmed`, `actual`,
+  `actually`, `definitely`, `proven`, `certain`, `real`,
+  `reality`, `truth`).
+- **J27**: doc-presence canary asserting "What this is NOT" and
+  "What remains unresolved" sections persist.
+- **J37**: `EXECUTION_OUTCOME_TYPES` snapshot asserting exactly
+  4 values, all `reported_*` prefixed.
+
+See `execution-outcome-runtime-boundary.md` for the substrate
+contract and `actor-runtime-boundary.md` §4f for the actor's
+verification chain.
+
 ## 6a. First actor lands (GM-22)
 
 GM-22 introduces `src/actors/` — the first code outside
