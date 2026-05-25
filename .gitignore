@@ -56,4 +56,9 @@ Thumbs.db
 # ----------------------------------------------------------------------------
 coverage/
 .nyc_output/
-tests/gauntlet/manual/
+# Manual gauntlet scenarios (GM-30): the directory ships
+# (the .gitkeep makes git track it) so the L38 doc-presence
+# canary can find it on a fresh CI checkout, but its CONTENT
+# is gitignored so local probes never accidentally commit.
+tests/gauntlet/manual/*
+!tests/gauntlet/manual/.gitkeep

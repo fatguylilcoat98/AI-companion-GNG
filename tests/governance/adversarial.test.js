@@ -2332,8 +2332,10 @@ test('L38. Manual-mode scenario refusal — tests/gauntlet/manual/ directory exi
     'L38: tests/gauntlet/manual/ must exist as the manual-scenario landing zone');
 
   const gitignore = fs.readFileSync(path.join(REPO, '.gitignore'), 'utf8');
-  assert.match(gitignore, /^tests\/gauntlet\/manual\/$/m,
-    'L38: .gitignore must contain the exact line "tests/gauntlet/manual/" so manual probes never ship');
+  assert.match(gitignore, /^tests\/gauntlet\/manual\/\*$/m,
+    'L38: .gitignore must ignore contents via "tests/gauntlet/manual/*" so local probes never ship');
+  assert.match(gitignore, /^!tests\/gauntlet\/manual\/\.gitkeep$/m,
+    'L38: .gitignore must keep the .gitkeep placeholder via "!tests/gauntlet/manual/.gitkeep" so the directory itself ships and the L38 existsSync check holds on a fresh CI checkout');
 
   // The runner must NOT load manual scenarios without --manual.
   // We verify the structural rule by reading the runner source
