@@ -1,0 +1,29 @@
+{
+  "id": "L.vocabulary-drift.verified-succeeded-rejected",
+  "version": "1.0.0",
+  "category": "vocabulary-drift",
+  "description": "verified_succeeded is rejected by the actor's vocabulary precondition (layer 9). The verified_* prefix is constitutionally isolated; succeeded would smuggle a truth claim. Mirrors K37's intent.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [
+    { "op": "fixtures.reset" }
+  ],
+  "step": {
+    "kind": "actor-call",
+    "actor": "createExecutionVerificationLedgerActor",
+    "intent": "governance.execution.verify",
+    "params": {
+      "executionOutcomeId": "aaaaaaaa-9999-1111-1111-e00000000001",
+      "verificationType": "human_observation",
+      "verificationResult": "verified_succeeded"
+    }
+  },
+  "expect": {
+    "result": "expected_throw",
+    "layerHit": "actor-layer-1",
+    "errorClassMatches": "^Error$"
+  }
+}

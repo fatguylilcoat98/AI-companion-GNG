@@ -2070,3 +2070,277 @@ test('K37. VERIFICATION_TYPES + VERIFICATION_RESULTS snapshots; verified_* prefi
       + '(verified_* is constitutionally isolated to VERIFICATION_RESULTS)');
   }
 });
+
+// ===================================================================
+// L-series — GM-30 substrate freeze + gauntlet harness canaries.
+//
+// Constitutional invariant: GM-30 is a freeze-and-test GM. The
+// substrate stops growing here. The gauntlet harness exists to
+// PROVE the substrate holds under adversarial input — it must
+// never become a vehicle for smuggling production behavior past
+// the guards.
+//
+// "No new substrate without an inspection-only GM."
+// ===================================================================
+
+test('L14. Sentinel content in scenario setup payload never appears in the rendered result JSON.', async () => {
+  // Constitutional addendum 6 + OQ-30.16(a): plant a sentinel in
+  // a scenario's session/payload-shaped fields and assert it
+  // never appears in the rendered result. The result schema
+  // MUST excludes payload content by construction; L14 asserts
+  // any future change to result.js does not regress.
+  const SENTINEL = 'L14_GAUNTLET_RESULT_SENTINEL';
+  const { renderResult, validateScenario } = require('../../src/gauntlet');
+  // Construct a scenario shape that's structurally valid (so
+  // validateScenario does not reject it) but whose description
+  // contains the sentinel. renderResult MUST NOT include the
+  // scenario.description, scenario.notes, or any other free-form
+  // field — only the locked typed fields.
+  const scenario = Object.freeze({
+    id: 'L14.sentinel.probe',
+    version: '1.0.0',
+    category: 'forged-decision',
+    description: SENTINEL,
+    notes: SENTINEL,
+    session: {
+      pilotInstanceId: '11111111-1111-1111-1111-111111111111',
+      userId: 'aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa',
+      userRole: 'admin',
+    },
+    setup: [],
+    step: { kind: 'static-scan', scan: SENTINEL },
+    expect: { result: 'expected_no_op', layerHit: 'static-scan', errorClassMatches: null },
+  });
+  validateScenario(scenario);
+  const rendered = renderResult({
+    scenario,
+    runStartedAt: new Date(0),
+    runFinishedAt: new Date(1),
+    actualResult: 'expected_no_op',
+    errorClass: null,
+    trace: [],
+    substrateState: null,
+    decisionShape: null,
+  });
+  const text = JSON.stringify(rendered);
+  assert.equal(text.includes(SENTINEL), false,
+    'L14: sentinel content from scenario description / notes / step.scan must not appear in rendered result');
+});
+
+test('L15. EVENT_TYPES snapshot still locked — GM-30 added NO new audit event types.', () => {
+  const memoryAudit = require('../../src/memory/audit');
+  const SNAPSHOT = ['memory.created', 'memory.list'];
+  const current = Object.values(memoryAudit.EVENT_TYPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'GM-30 must not widen memory EVENT_TYPES — GM-30 is a freeze-and-test GM, no substrate expansion');
+});
+
+test('L22. Substrate-freeze canary — exact counts of governance-staging tables / actor factories / ctx operations / EVENT_TYPES.', () => {
+  // Per OQ-30.14(a) + constitutional addendum 7. The freeze is
+  // the central architectural property of GM-30. Bumping any of
+  // these counts requires a new inspection-only GM with its own
+  // OQ approval block.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+
+  // (1) exactly 7 governance-staging tables.
+  const migrationsDir = path.join(REPO, 'db', 'migrations');
+  const stagingMigrations = fs.readdirSync(migrationsDir)
+    .filter((f) => /^\d{3}_(review_queue|review_decisions|execution_(authorizations|claims|attempts|outcomes|verifications))\.sql$/.test(f))
+    .sort();
+  assert.equal(stagingMigrations.length, 7,
+    `L22: expected exactly 7 governance-staging migrations; found ${stagingMigrations.length}: ${stagingMigrations.join(', ')}`);
+
+  // (2) exactly 8 Decision-gated actor factories.
+  const actors = require('../../src/actors');
+  const factoryNames = Object.keys(actors).filter((k) => /^create.*Actor$/.test(k)).sort();
+  const EXPECTED_FACTORIES = [
+    'createExecutionAttemptLedgerActor',
+    'createExecutionAuthorizationActor',
+    'createExecutionClaimLedgerActor',
+    'createExecutionOutcomeLedgerActor',
+    'createExecutionVerificationLedgerActor',
+    'createResponseDeliveryActor',
+    'createReviewDecisionActor',
+    'createReviewQueueActor',
+  ];
+  assert.deepEqual(factoryNames, EXPECTED_FACTORIES,
+    'L22: expected exactly 8 Decision-gated actor factories; the freeze forbids adding/removing without a new GM');
+
+  // (3) exactly 19 ctx operations (scan src/review/transaction.js
+  // for the named ctx-property closures).
+  const txn = fs.readFileSync(path.join(REPO, 'src/review/transaction.js'), 'utf8');
+  const ctxOps = (txn.match(/^\s+(\w+):\s*\([^)]*\)\s*=>/gm) || [])
+    .map((m) => m.match(/(\w+):/)[1])
+    .filter((n) => !['pilotInstanceId', 'userId', 'userRole'].includes(n));
+  assert.equal(ctxOps.length, 19,
+    `L22: expected exactly 19 ctx operations; found ${ctxOps.length}: ${ctxOps.join(', ')}`);
+
+  // (4) EVENT_TYPES still exactly 2.
+  const memoryAudit = require('../../src/memory/audit');
+  const eventTypes = Object.values(memoryAudit.EVENT_TYPES);
+  assert.equal(eventTypes.length, 2,
+    `L22: EVENT_TYPES must remain at exactly 2; found ${eventTypes.length}: ${eventTypes.join(', ')}`);
+});
+
+test('L24. File-scoped forbidden-vocabulary scan: src/gauntlet/ must not contain the 7-word OQ-30.10(a) list.', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const dir = path.join(REPO, 'src/gauntlet');
+  const FORBIDDEN = [
+    'bypass', 'skip', 'disable', 'override', 'force',
+    'monkeypatch', 'monkey_patch',
+  ];
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.js'));
+  const hits = [];
+  for (const f of files) {
+    const raw = fs.readFileSync(path.join(dir, f), 'utf8');
+    const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    for (const w of FORBIDDEN) {
+      if (new RegExp('\\b' + w + '\\b').test(code)) hits.push(`${f}:${w}`);
+    }
+  }
+  assert.deepEqual(hits, [],
+    `L24: src/gauntlet/ contains forbidden bare identifier(s): ${hits.join(', ')}. `
+    + 'The gauntlet TESTS the substrate; it never bypasses, skips, disables, overrides, forces, or monkeypatches.');
+});
+
+test('L27. Doc-presence canary — substrate-freeze.md and gauntlet-harness.md must contain all required sections + the verbatim phrase.', () => {
+  // Per OQ-30.13(a) + constitutional addendum 8. Four required
+  // sections in each doc + the verbatim phrase in
+  // substrate-freeze.md AND release-candidate.md.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+
+  const freeze = path.join(REPO, 'docs/governance/substrate-freeze.md');
+  assert.ok(fs.existsSync(freeze), 'L27: docs/governance/substrate-freeze.md must exist');
+  const freezeDoc = fs.readFileSync(freeze, 'utf8');
+  assert.match(freezeDoc, /^## What is frozen$/m, 'L27: substrate-freeze.md needs "## What is frozen"');
+  assert.match(freezeDoc, /^## What is not frozen$/m, 'L27: substrate-freeze.md needs "## What is not frozen"');
+  assert.match(freezeDoc, /^## How to unfreeze$/m, 'L27: substrate-freeze.md needs "## How to unfreeze"');
+  assert.match(freezeDoc, /^## Why this exists$/m, 'L27: substrate-freeze.md needs "## Why this exists"');
+  assert.ok(freezeDoc.includes('No new substrate without an inspection-only GM'),
+    'L27: substrate-freeze.md must contain the verbatim phrase "No new substrate without an inspection-only GM"');
+
+  const harness = path.join(REPO, 'docs/governance/gauntlet-harness.md');
+  assert.ok(fs.existsSync(harness), 'L27: docs/governance/gauntlet-harness.md must exist');
+  const harnessDoc = fs.readFileSync(harness, 'utf8');
+  assert.match(harnessDoc, /^## What this is$/m, 'L27: gauntlet-harness.md needs "## What this is"');
+  assert.match(harnessDoc, /^## What this is NOT$/m, 'L27: gauntlet-harness.md needs "## What this is NOT"');
+  assert.match(harnessDoc, /^## Council workflow$/m, 'L27: gauntlet-harness.md needs "## Council workflow"');
+  assert.match(harnessDoc, /^## Forbidden capabilities$/m, 'L27: gauntlet-harness.md needs "## Forbidden capabilities"');
+
+  const rc = path.join(REPO, 'docs/deployment/release-candidate.md');
+  const rcDoc = fs.readFileSync(rc, 'utf8');
+  assert.ok(rcDoc.includes('No new substrate without an inspection-only GM'),
+    'L27: release-candidate.md must contain the verbatim phrase "No new substrate without an inspection-only GM"');
+});
+
+test('L37. Gauntlet vocabulary snapshots — locked schema vocabularies.', () => {
+  // Per OQ-30.11(a) + OQ-30.10(a) the gauntlet's own vocab is
+  // mechanically locked. L37 is to the gauntlet what J37/K37 are
+  // to the outcome/verification substrates.
+  const {
+    SCENARIO_CATEGORIES,
+    STEP_KINDS,
+    ACTOR_NAMES,
+    SETUP_OPS,
+    FORGERY_PATTERNS,
+    EXPECT_RESULTS,
+    LAYERS,
+    COUNCIL_CLASSIFICATIONS,
+    SCENARIO_SCHEMA_VERSION,
+  } = require('../../src/gauntlet');
+
+  assert.equal(SCENARIO_SCHEMA_VERSION, '1.0.0',
+    'L37: scenario schema version is locked at "1.0.0" for GM-30');
+
+  assert.deepEqual([...SCENARIO_CATEGORIES].sort(), [
+    'chain-walk-corruption',
+    'consumer-reference-violation',
+    'cross-pilot-isolation',
+    'doc-presence-violation',
+    'event-types-widening',
+    'forbidden-vocabulary-drift',
+    'forged-decision',
+    'replay-violation',
+    'separation-of-duties-violation',
+    'vocabulary-drift',
+    'wrong-intent',
+    'wrong-role',
+  ], 'L37: SCENARIO_CATEGORIES drift — exactly 12 categories locked');
+
+  assert.deepEqual([...STEP_KINDS].sort(), [
+    'actor-call', 'boundary-guard', 'classifier-call',
+    'forged-decision', 'snapshot-check', 'static-scan',
+  ], 'L37: STEP_KINDS drift — exactly 6 kinds locked');
+
+  assert.equal(ACTOR_NAMES.length, 8,
+    'L37: ACTOR_NAMES must contain exactly 8 actor factory names (mirrors L22 freeze)');
+
+  assert.deepEqual([...SETUP_OPS].sort(), [
+    'chain.through.attempt',
+    'chain.through.authorization',
+    'chain.through.claim',
+    'chain.through.decision',
+    'chain.through.outcome',
+    'chain.through.queue',
+    'fixtures.reset',
+  ], 'L37: SETUP_OPS drift — exactly 7 setup ops locked');
+
+  assert.deepEqual([...FORGERY_PATTERNS].sort(), [
+    'missing-field', 'mutated-after-freeze',
+    'plain-object', 'prototype-tamper', 'wrong-intent',
+  ], 'L37: FORGERY_PATTERNS drift — exactly 5 patterns locked');
+
+  assert.deepEqual([...EXPECT_RESULTS].sort(), [
+    'expected_admission', 'expected_no_op',
+    'expected_rejection', 'expected_throw',
+  ], 'L37: EXPECT_RESULTS drift — exactly 4 outcomes locked');
+
+  assert.equal(LAYERS.length, 18,
+    'L37: LAYERS must contain exactly 18 named architectural layers');
+
+  assert.deepEqual([...COUNCIL_CLASSIFICATIONS].sort(), [
+    'classified_pending',
+    'expected_admission',
+    'expected_rejection',
+    'fixture_bug',
+    'invariant_violation',
+    'missing_architecture',
+    'no_action_needed',
+    'substrate_bug',
+    'test_bug',
+  ], 'L37: COUNCIL_CLASSIFICATIONS drift — exactly 9 classifications locked (per addendum 9)');
+});
+
+test('L38. Manual-mode scenario refusal — tests/gauntlet/manual/ directory exists and is gitignored.', () => {
+  // Per OQ-30.15(a) + constitutional addendum 4. Manual
+  // scenarios live in tests/gauntlet/manual/ which is
+  // gitignored; they never auto-run in CI.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+
+  const manualDir = path.join(REPO, 'tests/gauntlet/manual');
+  // The directory must EXIST (so authors have a known place to
+  // drop probes) but its contents must be gitignored.
+  assert.ok(fs.existsSync(manualDir),
+    'L38: tests/gauntlet/manual/ must exist as the manual-scenario landing zone');
+
+  const gitignore = fs.readFileSync(path.join(REPO, '.gitignore'), 'utf8');
+  assert.match(gitignore, /^tests\/gauntlet\/manual\/\*$/m,
+    'L38: .gitignore must ignore contents via "tests/gauntlet/manual/*" so local probes never ship');
+  assert.match(gitignore, /^!tests\/gauntlet\/manual\/\.gitkeep$/m,
+    'L38: .gitignore must keep the .gitkeep placeholder via "!tests/gauntlet/manual/.gitkeep" so the directory itself ships and the L38 existsSync check holds on a fresh CI checkout');
+
+  // The runner must NOT load manual scenarios without --manual.
+  // We verify the structural rule by reading the runner source
+  // — it must reference process.argv.includes('--manual').
+  const runner = fs.readFileSync(path.join(REPO, 'tests/gauntlet/runner.test.js'), 'utf8');
+  assert.match(runner, /process\.argv\.includes\(['"]--manual['"]\)/,
+    'L38: runner.test.js must gate manual-scenario loading behind --manual');
+});

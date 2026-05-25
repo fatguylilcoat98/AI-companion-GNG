@@ -1,0 +1,21 @@
+{
+  "id": "L.doc-presence-violation.k27-canary-mirror",
+  "version": "1.0.0",
+  "category": "doc-presence-violation",
+  "description": "Placeholder probe for the K27 / J27 / I27 doc-presence canary class. Assertion lives in tests/governance/adversarial.test.js per-substrate (and L27 for the GM-30 docs themselves).",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-4444-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [],
+  "step": {
+    "kind": "snapshot-check",
+    "scan": "K27-mirror"
+  },
+  "expect": {
+    "result": "expected_no_op",
+    "layerHit": "snapshot",
+    "errorClassMatches": null
+  }
+}

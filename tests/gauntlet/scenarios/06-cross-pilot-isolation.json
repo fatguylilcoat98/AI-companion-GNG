@@ -1,0 +1,29 @@
+{
+  "id": "L.cross-pilot-isolation.pilot-a-verifier-vs-pilot-b-outcome",
+  "version": "1.0.0",
+  "category": "cross-pilot-isolation",
+  "description": "Pilot-A admin6 tries to verify pilot-B's seeded outcome. RLS WITH CHECK + composite FK refuse. ReviewRepositoryError.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [
+    { "op": "fixtures.reset" }
+  ],
+  "step": {
+    "kind": "actor-call",
+    "actor": "createExecutionVerificationLedgerActor",
+    "intent": "governance.execution.verify",
+    "params": {
+      "executionOutcomeId": "bbbbbbbb-9999-2222-2222-f00000000001",
+      "verificationType": "human_observation",
+      "verificationResult": "verified_consistent"
+    }
+  },
+  "expect": {
+    "result": "expected_rejection",
+    "layerHit": "rls",
+    "errorClassMatches": "^ReviewRepositoryError$"
+  }
+}

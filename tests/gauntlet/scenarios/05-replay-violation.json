@@ -1,0 +1,29 @@
+{
+  "id": "L.replay-violation.duplicate-verification-rejected-by-unique",
+  "version": "1.0.0",
+  "category": "replay-violation",
+  "description": "A second verification against the same outcome (already covered by the seeded VERIFICATION_A) is rejected by UNIQUE(execution_outcome_id) at the DB layer. The error wraps in ReviewRepositoryError.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [
+    { "op": "fixtures.reset" }
+  ],
+  "step": {
+    "kind": "actor-call",
+    "actor": "createExecutionVerificationLedgerActor",
+    "intent": "governance.execution.verify",
+    "params": {
+      "executionOutcomeId": "aaaaaaaa-9999-1111-1111-e00000000001",
+      "verificationType": "system_log_review",
+      "verificationResult": "verification_inconclusive"
+    }
+  },
+  "expect": {
+    "result": "expected_rejection",
+    "layerHit": "rls",
+    "errorClassMatches": "^ReviewRepositoryError$"
+  }
+}

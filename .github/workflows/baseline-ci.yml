@@ -165,6 +165,16 @@ jobs:
           node-version: '20'
       - run: node scripts/ci/check-review-boundary.js
 
+  gauntlet-boundary-guard:
+    name: Gauntlet boundary guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/ci/check-gauntlet-boundary.js
+
   unit-tests:
     name: Runtime unit tests
     runs-on: ubuntu-latest
@@ -248,7 +258,12 @@ jobs:
           LYLO_APP_DATABASE_URL: postgres://lylo_app_login:test@localhost:5432/lylo_test
         # Serial file execution: each test file's `before` hook resets
         # the schema, so files must not race on the same database.
-        run: node --test --test-concurrency=1 tests/integration/*.test.js
+        # The GM-30 gauntlet runner is included here (not as a
+        # separate CI job) because it reuses the same Postgres
+        # service container and lylo_app_login role. Manual
+        # scenarios under tests/gauntlet/manual/ are gitignored
+        # and never auto-run (L38).
+        run: node --test --test-concurrency=1 tests/integration/*.test.js tests/gauntlet/runner.test.js
 
   rls-contract:
     name: RLS / privacy contract

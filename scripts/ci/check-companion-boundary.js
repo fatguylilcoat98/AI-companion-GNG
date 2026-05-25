@@ -131,6 +131,11 @@ for (const rel of files) {
         `${rel}: memory-module import "${specifier}" reaches past the public entry — allowed: "../memory" or "../memory/index"`
       );
     }
+    // 7. The gauntlet (GM-30) is test-only; companion must
+    //    never import it. Enforces OQ-30.12 reciprocity.
+    if (specifier === '../gauntlet' || specifier === '../gauntlet/index' || /^\.\.\/gauntlet\//.test(specifier)) {
+      errors.push(`${rel}: forbidden import "${specifier}" — src/gauntlet/ is test-only (GM-30)`);
+    }
   }
 }
 

@@ -117,6 +117,11 @@ for (const rel of files) {
     if (specifier === 'pg' && rel !== PG_ALLOWED_PATH) {
       errors.push(`${rel}: pg may only be imported from ${PG_ALLOWED_PATH}`);
     }
+    // 5. The gauntlet (GM-30) is test-only; runtime / db must
+    //    never import it. Enforces OQ-30.12 reciprocity.
+    if (specifier === '../gauntlet' || specifier === '../gauntlet/index' || /^\.\.\/gauntlet\//.test(specifier)) {
+      errors.push(`${rel}: forbidden import "${specifier}" — src/gauntlet/ is test-only and must never be imported by runtime/db code (GM-30)`);
+    }
   }
 }
 
