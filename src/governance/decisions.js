@@ -81,6 +81,15 @@ const REASONS = Object.freeze({
   // a REPORTED observation; truth claims, verification, and
   // reconciliation are explicitly deferred.
   EXECUTION_OUTCOME_RECORDING_PERMITTED: 'execution_outcome_recording_permitted',
+  // GM-29: the classifier admits GOVERNANCE_EXECUTION_VERIFY
+  // intents so the execution-verification-ledger actor has a
+  // Decision to verify. Same posture — role + data preconditions
+  // enforced at the actor + DB trigger. The verification artifact
+  // is epistemic: it records what was checked, by whom, through
+  // which channel, and whether it appeared consistent. It does
+  // NOT establish canonical truth, trigger correction, or have
+  // any operational consequence.
+  EXECUTION_VERIFICATION_RECORDING_PERMITTED: 'execution_verification_recording_permitted',
 });
 
 const ALL_REASONS = new Set(Object.values(REASONS));
@@ -121,6 +130,8 @@ const POLICY_REFS = Object.freeze({
     'execution-attempt-runtime-boundary.md §3',
   [REASONS.EXECUTION_OUTCOME_RECORDING_PERMITTED]:
     'execution-outcome-runtime-boundary.md §3',
+  [REASONS.EXECUTION_VERIFICATION_RECORDING_PERMITTED]:
+    'execution-verification-runtime-boundary.md §3',
 });
 
 // Module-private token. External code cannot reach this Symbol —

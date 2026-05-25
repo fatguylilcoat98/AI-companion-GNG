@@ -501,6 +501,106 @@ See `execution-outcome-runtime-boundary.md` for the substrate
 contract and `actor-runtime-boundary.md` §4f for the actor's
 verification chain.
 
+## 6h. First independent-check persistence lands (GM-29)
+
+GM-29 introduces `src/actors/execution-verification-ledger-actor.js`
+and extends `src/review/` with three read+write operations
+(`recordExecutionVerification`, `listExecutionVerifications`,
+`inspectExecutionVerification`). The substrate
+(`governance_execution_verifications`) and the actor together
+prove the next invariant:
+
+> VERIFICATION ≠ RECONCILIATION ≠ REPAIR.
+
+This is the FIRST artifact in the chain that names "checking"
+as a distinct governance act — and deliberately stops short of
+saying that the check was correct, repaired anything,
+reconciled anything, or had any operational consequence. A
+verification row is epistemic, not authoritative. It records
+what was checked, by whom, through which channel, and whether
+the result appeared consistent with the reported outcome.
+
+`verification_type` is locked at three independent layers (Set
+in `src/review/repository.js`; DB CHECK in
+`db/migrations/014_execution_verifications.sql`; K37 snapshot
+in `tests/governance/adversarial.test.js`) to exactly four
+channel values: `human_observation`, `system_log_review`,
+`database_state_check`, `external_confirmation`. `automated_check`
+is deliberately excluded — automation-as-verifier is a separate
+decision gate.
+
+`verification_result` is locked at the same three layers to
+exactly three values: `verified_consistent`,
+`verified_inconsistent`, `verification_inconclusive`. The
+`verified_*` prefix is constitutionally isolated: it appears
+in this substrate and nowhere else. K37 enforces that the
+prefix does NOT leak into `EXECUTION_OUTCOME_TYPES`.
+`verified_succeeded` / `verified_failed` are deliberately
+excluded — they would smuggle truth claims via verification.
+
+Verifications are OPTIONAL. An outcome may exist forever with
+no verification row, and **the absence of a verification row
+is NOT itself a verification result**. Any policy that
+interprets absence is OUTSIDE the GM-29 contract.
+
+No `verification_basis` column. GM-29 stores governance
+metadata only — no evidence payloads, no raw logs, no
+screenshots, no URLs, no notes, no free-form verifier
+narratives (per OQ-29.3(d) + constitutional addendum 7). The
+basis question is a separate decision gate with its own
+privacy and retention contract.
+
+The future-conflict-resolution / canonical-state /
+verification-evidence GM will need to address each of twelve
+unresolved questions enumerated in
+`docs/governance/execution-verification-runtime-boundary.md`
+"What remains unresolved" (canonical state, missing-verification
+semantics, disagreement between verifiers, disagreement between
+verifier and recorder, aggregate use, evidence storage,
+automated verification, time windows, revisions, cascading
+verification, privacy boundary, pre-canonical-GM rows). The
+K27 doc-presence canary asserts that section remains in the
+doc so the warning cannot be silently removed.
+
+GM-29 widens this module minimally: exactly one new intent type
+(`INTENT_TYPES.GOVERNANCE_EXECUTION_VERIFY`), exactly one new
+reason (`REASONS.EXECUTION_VERIFICATION_RECORDING_PERMITTED`),
+exactly one new POLICY_REFS entry. `EVENT_TYPES` remains
+unchanged (per the constitutional rule — the verifications
+table IS the artifact). Snapshot tests C2/C3/C4 catch the
+widening at +1 each (REASONS 17 values; INTENT_TYPES 14
+values; OUTCOMES 10 values). K37 locks `VERIFICATION_TYPES`
+at exactly 4 values and `VERIFICATION_RESULTS` at exactly 3.
+
+**Constitutional rule** (now at seven levels):
+> *Approval is not authorization; authorization is not execution;
+> an authorization row is NOT an execution signal; a claim row
+> is NOT execution — it only records single-consumption;
+> an attempt row is NOT an outcome — it only records the
+> beginning of an attempt; an outcome row is NOT truth — it
+> only records what a human reported observing; **a
+> verification row is NOT truth — it only records that a
+> separate human independently CHECKED the report and what they
+> observed through a named evidence channel.***
+
+Four adversarial canaries protect GM-29's invariants:
+- **K22**: static scan asserting zero references to
+  `governance_execution_verifications` outside the writing
+  path. **Continuously enforced per constitutional addendum 3.**
+- **K24**: file-scoped forbidden-vocabulary scan on the ledger
+  actor (20 words: 12 operational/repair + 8 fix-it
+  temptation).
+- **K27**: doc-presence canary asserting all four required
+  sections AND the verbatim phrase
+  `verification ≠ reconciliation ≠ repair`.
+- **K37**: `VERIFICATION_TYPES` (4) + `VERIFICATION_RESULTS`
+  (3) snapshots + `verified_*` isolation from
+  `EXECUTION_OUTCOME_TYPES`.
+
+See `execution-verification-runtime-boundary.md` for the
+substrate contract and `actor-runtime-boundary.md` §4g for the
+actor's verification chain.
+
 ## 6a. First actor lands (GM-22)
 
 GM-22 introduces `src/actors/` — the first code outside

@@ -69,6 +69,9 @@ const {
   recordExecutionOutcome,
   listExecutionOutcomes,
   inspectExecutionOutcome,
+  recordExecutionVerification,
+  listExecutionVerifications,
+  inspectExecutionVerification,
 } = require('./repository');
 
 function buildCtx(client, sessionCtx) {
@@ -109,6 +112,13 @@ function buildCtx(client, sessionCtx) {
       listExecutionOutcomes(client, sessionCtx, options),
     inspectExecutionOutcome: (outcomeId) =>
       inspectExecutionOutcome(client, sessionCtx, outcomeId),
+    // GM-29: execution-verification read + write.
+    recordExecutionVerification: (input) =>
+      recordExecutionVerification(client, sessionCtx, input),
+    listExecutionVerifications: (options) =>
+      listExecutionVerifications(client, sessionCtx, options),
+    inspectExecutionVerification: (verificationId) =>
+      inspectExecutionVerification(client, sessionCtx, verificationId),
   };
 }
 

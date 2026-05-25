@@ -86,18 +86,39 @@
  *               rows in GM-28; verification, retries,
  *               reconciliation, and time windows remain
  *               deferred.
+ *   VERIFICATION_RECORDED — GM-29: a verifier (different from
+ *               the outcome recorder) independently checked a
+ *               reported outcome and recorded what they
+ *               observed through a named evidence channel. The
+ *               first artifact in the chain that names
+ *               "checking" — and deliberately stops short of
+ *               saying the check was correct, repaired
+ *               anything, or had any operational consequence.
+ *               Constitutional rule: VERIFICATION ≠
+ *               RECONCILIATION ≠ REPAIR. A verification row is
+ *               epistemic, not authoritative.
+ *               `verified_consistent` ≠ truth.
+ *               `verification_inconclusive` ≠ "retry" /
+ *               "escalate" / "someone must act." The
+ *               `verified_*` prefix is constitutionally
+ *               isolated to the verification artifact; it must
+ *               NEVER appear in EXECUTION_OUTCOME_TYPES. No
+ *               production code consumes verification rows in
+ *               GM-29; correction, dispute resolution, and
+ *               canonicalization remain deferred.
  */
 
 const OUTCOMES = Object.freeze({
-  EXECUTED:            'executed',
-  ABSTAINED:           'abstained',
-  REJECTED:            'rejected',
-  STAGED:              'staged',
-  RECORDED:            'recorded',
-  AUTHORIZED_RECORDED: 'authorized_recorded',
-  CLAIM_RECORDED:      'claim_recorded',
-  ATTEMPT_RECORDED:    'attempt_recorded',
-  OUTCOME_RECORDED:    'outcome_recorded',
+  EXECUTED:              'executed',
+  ABSTAINED:             'abstained',
+  REJECTED:              'rejected',
+  STAGED:                'staged',
+  RECORDED:              'recorded',
+  AUTHORIZED_RECORDED:   'authorized_recorded',
+  CLAIM_RECORDED:        'claim_recorded',
+  ATTEMPT_RECORDED:      'attempt_recorded',
+  OUTCOME_RECORDED:      'outcome_recorded',
+  VERIFICATION_RECORDED: 'verification_recorded',
 });
 
 module.exports = { OUTCOMES };

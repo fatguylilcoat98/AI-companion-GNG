@@ -312,7 +312,7 @@ test('integrity: every Decision the classifier returns has a REASONS-vocabulary 
 
 // ---- admissibility-before-execution: only one intent type is admissible by default ----
 
-test('admissibility-before-execution: response.deliver + 5 governance.* intent types are admissible by default; everything else is requires_review or inadmissible', () => {
+test('admissibility-before-execution: response.deliver + 6 governance.* intent types are admissible by default; everything else is requires_review or inadmissible', () => {
   const admissibleTypes = [];
   for (const type of Object.values(INTENT_TYPES)) {
     const intent =
@@ -328,7 +328,8 @@ test('admissibility-before-execution: response.deliver + 5 governance.* intent t
   // GM-26: governance.execution.claim.
   // GM-27: governance.execution.attempt.
   // GM-28: governance.execution.outcome.record.
-  // All five governance.* intents push role/data enforcement to
+  // GM-29: governance.execution.verify.
+  // All six governance.* intents push role/data enforcement to
   // their respective actors + DB triggers; the classifier is
   // stateless and admits each intent type unconditionally.
   assert.deepEqual(
@@ -338,10 +339,11 @@ test('admissibility-before-execution: response.deliver + 5 governance.* intent t
       'governance.execution.authorize',
       'governance.execution.claim',
       'governance.execution.outcome.record',
+      'governance.execution.verify',
       'governance.review.decide',
       'response.deliver',
     ],
-    'exactly six intent types should be admissible by default after GM-28'
+    'exactly seven intent types should be admissible by default after GM-29'
   );
 });
 

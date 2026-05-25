@@ -60,8 +60,8 @@ per process — `LYLO_RUNTIME_DATABASE_URL`, `LYLO_SETUP_DATABASE_URL`).
 
 | Role | Purpose | Table grants |
 |---|---|---|
-| `lylo_runtime` | Runtime configuration loader (GM-7b) | SELECT on `pilot_instances`, `companion_profile`, `supported_person_profile`, `setup_state`. **No grant on any of the six governance-staging tables** (`governance_review_queue`, `governance_review_decisions`, `governance_execution_authorizations`, `governance_execution_claims`, `governance_execution_attempts`, `governance_execution_outcomes`). |
-| `lylo_app` | Memory-governance runtime + all six governance-staging actors (GM-23 through GM-28) | SELECT on all client-scoped tables; INSERT on `memory_store`, `governance_audit_log`, `memory_vault_sessions`, and the six governance-staging tables (`governance_review_queue` GM-23, `governance_review_decisions` GM-24, `governance_execution_authorizations` GM-25, `governance_execution_claims` GM-26, `governance_execution_attempts` GM-27, `governance_execution_outcomes` GM-28); UPDATE (`revoked_at`) on `memory_vault_sessions`; all gated by RLS policies. **No UPDATE or DELETE on any of the six governance-staging tables — append-only enforced by triggers plus GRANT absence.** |
+| `lylo_runtime` | Runtime configuration loader (GM-7b) | SELECT on `pilot_instances`, `companion_profile`, `supported_person_profile`, `setup_state`. **No grant on any of the seven governance-staging tables** (`governance_review_queue`, `governance_review_decisions`, `governance_execution_authorizations`, `governance_execution_claims`, `governance_execution_attempts`, `governance_execution_outcomes`, `governance_execution_verifications`). |
+| `lylo_app` | Memory-governance runtime + all seven governance-staging actors (GM-23 through GM-29) | SELECT on all client-scoped tables; INSERT on `memory_store`, `governance_audit_log`, `memory_vault_sessions`, and the seven governance-staging tables (`governance_review_queue` GM-23, `governance_review_decisions` GM-24, `governance_execution_authorizations` GM-25, `governance_execution_claims` GM-26, `governance_execution_attempts` GM-27, `governance_execution_outcomes` GM-28, `governance_execution_verifications` GM-29); UPDATE (`revoked_at`) on `memory_vault_sessions`; all gated by RLS policies. **No UPDATE or DELETE on any of the seven governance-staging tables — append-only enforced by triggers plus GRANT absence.** |
 | `lylo_setup` | Offline provisioning script (GM-12) | INSERT/SELECT on the four config tables + `users`; `BYPASSRLS` so it can seed. **No grant on any of the five governance-staging tables.** |
 | `lylo_admin` | Operator | SELECT on most tables; **no** policy on `memory_store` or `memory_vaults`. **SELECT on all five governance-staging tables** — admins are the only role that can see authorization/claim/attempt rows in their pilot (GM-25/26/27: no proposer / reviewer / authorizer / claimant / attempter-as-non-admin / family / caregiver SELECT). |
 
@@ -420,6 +420,69 @@ remains unresolved" sections; **J37** is a snapshot canary
 asserting `EXECUTION_OUTCOME_TYPES` contains exactly the 4
 `reported_*` values.
 
+### `governance_execution_verifications` (GM-29)
+
+Two policies — admin-only INSERT and admin-only SELECT.
+
+1. **`verification_insert_admin`** (INSERT WITH CHECK) — tenant
+   match AND `verified_by_user_id = current_setting('app.user_id')`
+   AND `current_setting('app.user_role') = 'admin'`.
+2. **`verification_admin_select`** (SELECT) — tenant match AND
+   `app.user_role = 'admin'`.
+
+**No proposer / reviewer / authorizer / claimant / attempter /
+recorder / verifier-as-non-admin / family / caregiver SELECT
+policy.** Verifications are admin-only governance metadata.
+
+**No UPDATE / DELETE policy.** Append-only at every layer.
+
+A **BEFORE-INSERT preconditions trigger** walks the 7-deep chain
+verification → outcome → attempt → claim → authorization →
+review_decision and raises if any of three data preconditions
+fail:
+- the referenced outcome must exist in the same pilot,
+- `recorded_by_user_id` ≠ `verified_by_user_id` (self-
+  verification forbidden — extends adjacent-only separation-
+  of-duties chain to 6 deep),
+- the underlying `review_decision.review_outcome` must still
+  be `'approved'` (defense in depth).
+
+`UNIQUE(execution_outcome_id)` forbids replay. The DB cannot
+represent multiple verifications against the same outcome.
+Verifications are also OPTIONAL — an outcome may exist forever
+with no verification row, and absence is NOT itself a
+verification result.
+
+The `verified_by_role` column has a locked CHECK
+(`= 'admin'`). `verification_type` is **CHECK-locked at the DB
+layer** to exactly four channel values: `human_observation`,
+`system_log_review`, `database_state_check`,
+`external_confirmation`. `verification_result` is
+**CHECK-locked at the DB layer** to exactly three result
+values: `verified_consistent`, `verified_inconsistent`,
+`verification_inconclusive`. The `verified_*` prefix is a
+constitutional boundary, isolated to this table.
+
+No `verification_basis` column. GM-29 stores governance
+metadata only — no evidence payloads.
+
+**Constitutional rule:** *VERIFICATION ≠ RECONCILIATION ≠
+REPAIR.* `verified_consistent` ≠ truth.
+`verification_inconclusive` ≠ retry / escalate / "someone must
+act." A verification row is epistemic, not authoritative. No
+production code in GM-29 consumes
+`governance_execution_verifications` operationally. Adversarial
+test **K22** is a static-scan canary (continuously enforced per
+constitutional addendum 3); **K24** is a file-scoped
+forbidden-vocabulary scan on the actor file (20 words: 12
+operational/repair + 8 fix-it temptation); **K27** is a doc-
+presence canary asserting all four required sections AND the
+verbatim phrase `verification ≠ reconciliation ≠ repair`;
+**K37** is a snapshot canary asserting `VERIFICATION_TYPES`
+contains exactly 4 values, `VERIFICATION_RESULTS` exactly 3,
+and the `verified_*` prefix does NOT appear in
+`EXECUTION_OUTCOME_TYPES`.
+
 ### `governance_audit_log`
 
 - Admins see all in-pilot events (SELECT).
@@ -502,6 +565,7 @@ in either suite fails the build. See `baseline-ci.md`.
 | Execution-claim substrate: `db/migrations/011_execution_claims.sql` adds `governance_execution_claims` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, BEFORE-INSERT preconditions trigger walking authorization → review_decision and enforcing scope equality + non-self-claim + surface ↔ scope 1:1 mapping + chain-walk to review_outcome = 'approved', UNIQUE on execution_authorization_id as the replay-prevention wall). `src/review/` extends with three new ctx operations (recordExecutionClaim / listExecutionClaims / inspectExecutionClaim); `src/actors/execution-claim-ledger-actor.js` is the fifth Decision-gated actor (ten-layer verification chain, admin-only role, dual vocabulary locks AUTHORIZATION_SCOPES + EXECUTION_SURFACES). Reuses `LYLO_APP_DATABASE_URL`. Fixture adds admin3-A/admin3-B (per OQ-26.15) so claimant ≠ authorizer naturally (admin authorizes; admin3 claims). Integration matrix proves admin3 claims / proposer-denied / family-denied / self-claim-trigger-raises / replay-UNIQUE-raises / scope-drift-trigger-raises / surface-mismatch-trigger-raises / cross-pilot-FK-rejection / append-only-enforced / lylo_runtime-grant-denied. **No production consumer.** Adversarial H22 = static-scan canary enforces zero references outside writing path; H27 = future_* prefix discipline on EXECUTION_SURFACES; H28 = file-scoped forbidden-vocabulary scan on the ledger actor. Claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success — claim ONLY means "this authorization has now been consumed exactly once" | Landed | GM-26 |
 | Execution-attempt substrate: `db/migrations/012_execution_attempts.sql` adds `governance_execution_attempts` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, BEFORE-INSERT preconditions trigger walking claim → authorization → review_decision and enforcing scope equality with claim + surface equality with claim + non-self-attempt + 5-deep chain-walk to review_outcome = 'approved', UNIQUE on execution_claim_id forbidding retry / multi-attempt). `src/review/` extends with three new ctx operations (recordExecutionAttempt / listExecutionAttempts / inspectExecutionAttempt); `src/actors/execution-attempt-ledger-actor.js` is the sixth Decision-gated actor (ten-layer verification chain). Reuses `LYLO_APP_DATABASE_URL`. Fixture adds admin4-A/admin4-B (per OQ-27.15) so attempter ≠ claimant naturally (admin3 claims; admin4 attempts). Integration matrix proves admin4 attempts / proposer-denied / family-denied / self-attempt-trigger-raises / replay-UNIQUE-raises / scope-drift-trigger-raises / surface-drift-trigger-raises / cross-pilot-FK-rejection / append-only-enforced / lylo_runtime-grant-denied. **No production consumer.** Three adversarial canaries: I23 = static-scan zero-references-outside-writing-path; I24 = file-scoped forbidden-vocabulary scan on the ledger actor (STRICTER than H28 — adds `committed`); I27 = doc-presence canary asserting both "What this is NOT" and "What remains unresolved" sections remain in the boundary doc. **ATTEMPT IS NOT OUTCOME** — records ONLY the beginning of an attempt; never success, failure, completion, interruption, delivery, dispatch, finalization, or commit state | Landed | GM-27 |
 | Execution-outcome substrate: `db/migrations/013_execution_outcomes.sql` adds `governance_execution_outcomes` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, BEFORE-INSERT preconditions trigger walking attempt → claim → authorization → review_decision and enforcing scope equality with attempt + surface equality with attempt + non-self-recording + 6-deep chain-walk to review_outcome = 'approved', UNIQUE on execution_attempt_id forbidding replay, CHECK on outcome_type locking the 4-value `reported_*` observational vocabulary at the DB layer). `src/review/` extends with three new ctx operations (recordExecutionOutcome / listExecutionOutcomes / inspectExecutionOutcome); `src/actors/execution-outcome-ledger-actor.js` is the seventh Decision-gated actor (ten-layer verification chain + vocabulary precondition). Reuses `LYLO_APP_DATABASE_URL`. Fixture adds admin5-A/admin5-B (per OQ-28.15) so recorder ≠ attempter naturally (admin4 attempts; admin5 records). Integration matrix proves admin5 records all four `reported_*` values / proposer-denied / self-recording-trigger-raises / replay-UNIQUE-raises / scope-drift-trigger-raises / surface-drift-trigger-raises / cross-pilot-FK-rejection / append-only-enforced / lylo_runtime-grant-denied / DB-CHECK-rejects-non-reported_*-vocabulary. **No production consumer.** Outcomes are OPTIONAL — absence of an outcome row is NOT itself an outcome. Four adversarial canaries: J22 = static-scan zero-references-outside-writing-path; J24 = file-scoped forbidden-vocabulary scan on the ledger actor (STRICTEST in the substrate — 18 words: GM-27's 8 outcome-implying words plus 10 truth-claim words `verified` / `confirmed` / `actual` / `actually` / `definitely` / `proven` / `certain` / `real` / `reality` / `truth`); J27 = doc-presence canary asserting both "What this is NOT" and "What remains unresolved" sections remain in the boundary doc; J37 = `EXECUTION_OUTCOME_TYPES` snapshot asserting exactly 4 values all `reported_*` prefixed. **AN OUTCOME ROW IS NOT TRUTH** — `reported_completed` ≠ `verified_completed`; the `reported_*` prefix puts the report-vs-verdict distinction into the data itself | Landed | GM-28 |
+| Execution-verification substrate: `db/migrations/014_execution_verifications.sql` adds `governance_execution_verifications` (admin-only INSERT WITH CHECK, admin-only SELECT, append-only trigger, BEFORE-INSERT preconditions trigger walking outcome → attempt → claim → authorization → review_decision and enforcing non-self-verification + 7-deep chain-walk to review_outcome = 'approved', UNIQUE on execution_outcome_id forbidding replay, CHECK on verification_type locking the 4-value channel vocabulary + CHECK on verification_result locking the 3-value vocabulary at the DB layer). NO `verification_basis` column (per OQ-29.3(d) + constitutional addendum 7 — GM-29 stores governance metadata only). `src/review/` extends with three new ctx operations (recordExecutionVerification / listExecutionVerifications / inspectExecutionVerification); `src/actors/execution-verification-ledger-actor.js` is the eighth Decision-gated actor (nine-layer verification chain + two vocabulary preconditions). Reuses `LYLO_APP_DATABASE_URL`. Fixture adds admin6-A/admin6-B (per OQ-29.15) so verifier ≠ recorder naturally (admin5 records outcomes; admin6 verifies them). Integration matrix proves admin6 records every `verified_*` / `verification_inconclusive` combination / proposer-denied / self-verification-trigger-raises / replay-UNIQUE-raises / missing-outcome-rejected / cross-pilot-FK-rejection / append-only-enforced / lylo_runtime-grant-denied / DB-CHECK-rejects-smuggled-verified-vocabulary. **No production consumer (continuously enforced per constitutional addendum 3).** Verifications are OPTIONAL — absence of a verification row is NOT itself a verification result. Four adversarial canaries: K22 = static-scan zero-references-outside-writing-path; K24 = file-scoped forbidden-vocabulary scan on the ledger actor (20 words: 12 operational/repair `executed`/`dispatched`/`retry`/`retried`/`reconcile`/`reconciled`/`rollback`/`compensate`/`side_effect`/`mutate`/`promote`/`admit` + 8 fix-it temptation `fix`/`repair`/`correct`/`heal`/`resolve`/`revert`/`undo`/`apply`); K27 = doc-presence canary asserting all four required sections (`What this is NOT`, `What remains unresolved`, `Verification is not reconciliation`, `Verification does not execute or repair`) AND the verbatim phrase `verification ≠ reconciliation ≠ repair`; K37 = `VERIFICATION_TYPES` (4) + `VERIFICATION_RESULTS` (3) snapshot + `verified_*` isolation from `EXECUTION_OUTCOME_TYPES`. **VERIFICATION ≠ RECONCILIATION ≠ REPAIR** — `verified_consistent` ≠ truth; `verification_inconclusive` ≠ retry / escalate / "someone must act"; the `verified_*` prefix is constitutionally isolated to this table | Landed | GM-29 |
 
 As of GM-16 the connection wire-up is complete:
 

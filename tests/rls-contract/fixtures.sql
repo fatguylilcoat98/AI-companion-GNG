@@ -34,7 +34,14 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   -- records the observed outcome). Adjacent-only separation-of-
   -- duties chain extends one more stage (now 5 deep:
   -- reviewer ≠ authorizer ≠ claimant ≠ attempter ≠ recorder).
-  ('aaaaaaaa-8888-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin5-A',     'admin');
+  ('aaaaaaaa-8888-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin5-A',     'admin'),
+  -- GM-29: sixth admin per pilot so verification rows can be
+  -- seeded with verifier != outcome recorder (admin5-A records
+  -- outcomes; admin6-A verifies them). Adjacent-only separation-
+  -- of-duties chain extends one more stage (now 6 deep:
+  -- reviewer ≠ authorizer ≠ claimant ≠ attempter ≠ recorder ≠
+  -- verifier).
+  ('aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin6-A',     'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('11111111-1111-1111-1111-111111111111', 'Aria', '{"tone":"warm"}'::jsonb);
@@ -146,7 +153,8 @@ INSERT INTO users (id, pilot_instance_id, username, role) VALUES
   ('bbbbbbbb-7777-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin4-B', 'admin'),
   -- GM-28: fifth admin per pilot (see comment in Pilot A users
   -- block above).
-  ('bbbbbbbb-8888-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin5-B', 'admin');
+  ('bbbbbbbb-8888-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin5-B', 'admin'),
+  ('bbbbbbbb-9999-2222-2222-bbbbbbbbbbbb', '22222222-2222-2222-2222-222222222222', 'admin6-B', 'admin');
 
 INSERT INTO companion_profile (pilot_instance_id, companion_name, persona) VALUES
   ('22222222-2222-2222-2222-222222222222', 'Bram', '{"tone":"steady"}'::jsonb);
@@ -384,3 +392,32 @@ INSERT INTO governance_execution_outcomes
    'reported_unknown',
    'bbbbbbbb-8888-2222-2222-bbbbbbbbbbbb',
    'admin');
+
+-- GM-29: execution-verification rows. verifier (admin6) !=
+-- outcome recorder (admin5). One verification per outcome
+-- (UNIQUE on execution_outcome_id). VERIFICATION_A uses
+-- `verified_consistent` on OUTCOME_A (`reported_completed`);
+-- VERIFICATION_B uses `verification_inconclusive` on OUTCOME_B
+-- (`reported_unknown`) — a meaningful governance signal: two
+-- humans + the verifier's evidence channel agreed there was
+-- nothing to verify against. The `verified_*` vocabulary is
+-- constitutionally isolated to this table; K37 snapshot test
+-- enforces it does NOT leak into EXECUTION_OUTCOME_TYPES.
+INSERT INTO governance_execution_verifications
+  (id, pilot_instance_id, execution_outcome_id,
+   verified_by_user_id, verified_by_role,
+   verification_type, verification_result) VALUES
+  ('aaaaaaaa-8888-1111-1111-100000000001',
+   '11111111-1111-1111-1111-111111111111',
+   'aaaaaaaa-9999-1111-1111-e00000000001',
+   'aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa',
+   'admin',
+   'database_state_check',
+   'verified_consistent'),
+  ('bbbbbbbb-8888-2222-2222-200000000001',
+   '22222222-2222-2222-2222-222222222222',
+   'bbbbbbbb-9999-2222-2222-f00000000001',
+   'bbbbbbbb-9999-2222-2222-bbbbbbbbbbbb',
+   'admin',
+   'human_observation',
+   'verification_inconclusive');

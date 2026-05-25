@@ -229,7 +229,7 @@ connection strings** (GM-16). The connecting LOGIN role's effective
 identity determines what RLS lets the process see and write — see
 `../governance/rls-privacy-contract.md`.
 
-#### Memory + companion + conversation + governance + actors + review are all library-only today (GM-17 through GM-28)
+#### Memory + companion + conversation + governance + actors + review are all library-only today (GM-17 through GM-29)
 
 The memory-governance module (`src/memory/`, GM-17, hardened in
 GM-18), the read-only companion consumer (`src/companion/`,
@@ -240,26 +240,31 @@ GM-19), the first mounted conversation runtime
 GM-23 review-queue substrate, the GM-24 review-decision
 substrate, the GM-25 execution-authorization substrate, the
 GM-26 execution-claim substrate, the GM-27 execution-attempt
-substrate, and the GM-28 execution-outcome substrate (extended
-`src/review/` + six Decision-gated actors in `src/actors/`) are
-all **libraries**. No process in this release consumes them —
-the runtime boot path (`src/runtime/boot.js`) does not import
-any of them, the provisioning script does not import any of
-them, and no HTTP endpoint exists. Companion behavior,
-transcript persistence, any user-facing conversational surface,
-additional actor modules, any dequeue / approval / human-review
-surface for the review queue, **any execution surface that
-would consume recorded review decisions, recorded execution
+substrate, the GM-28 execution-outcome substrate, and the
+GM-29 execution-verification substrate (extended `src/review/`
++ seven Decision-gated actors in `src/actors/`) are all
+**libraries**. No process in this release consumes them — the
+runtime boot path (`src/runtime/boot.js`) does not import any
+of them, the provisioning script does not import any of them,
+and no HTTP endpoint exists. Companion behavior, transcript
+persistence, any user-facing conversational surface, additional
+actor modules, any dequeue / approval / human-review surface
+for the review queue, **any execution surface that would
+consume recorded review decisions, recorded execution
 authorizations, recorded execution claims, recorded execution
-attempts, OR recorded execution outcomes** (approval is NOT
-authorization; authorization is NOT execution; an authorization
-row is NOT an execution signal; a claim row is NOT execution —
-it ONLY records single-consumption; an attempt row is NOT an
-outcome — it ONLY records the beginning of an attempt; **an
-outcome row is NOT truth — it ONLY records what a human
-reported observing; `reported_completed` ≠ `verified_completed`**),
-and any mounting of the actor / classifier / conversation
-runtime / review substrate into a production process all remain
+attempts, recorded execution outcomes, OR recorded execution
+verifications** (approval is NOT authorization; authorization
+is NOT execution; an authorization row is NOT an execution
+signal; a claim row is NOT execution — it ONLY records
+single-consumption; an attempt row is NOT an outcome — it ONLY
+records the beginning of an attempt; an outcome row is NOT
+truth — it ONLY records what a human reported observing
+(`reported_completed` ≠ `verified_completed`); **a verification
+row is NOT truth — it ONLY records that a separate human
+independently CHECKED the report through a named evidence
+channel; verification ≠ reconciliation ≠ repair**), and any
+mounting of the actor / classifier / conversation runtime /
+review substrate into a production process all remain
 explicitly deferred behind their own decision gates. The system
 is **internal-build only** until the council's full gauntlet
 completes.
@@ -267,14 +272,14 @@ completes.
 `LYLO_APP_DATABASE_URL` and the `lylo_app_login` LOGIN role are
 provisioned now so the contract is in place ahead of future GMs
 that introduce production callers; they are not required by boot.
-GM-23 through GM-28 reuse **this same** LOGIN role for all six
-governance-staging substrates — `src/review/client.js` connects
-via `LYLO_APP_DATABASE_URL` (no new env var, no new LOGIN role).
-If you are deploying only the runtime shell, you may leave
-`LYLO_APP_DATABASE_URL` unset and skip the `lylo_app_login`
-LOGIN role — `npm start` will succeed without them. (The CI
-integration-tests job sets them because the
-GM-17/GM-18/GM-19/GM-20/GM-23/GM-24/GM-25/GM-26/GM-27/GM-28 integration suites exercise
+GM-23 through GM-29 reuse **this same** LOGIN role for all
+seven governance-staging substrates — `src/review/client.js`
+connects via `LYLO_APP_DATABASE_URL` (no new env var, no new
+LOGIN role). If you are deploying only the runtime shell, you
+may leave `LYLO_APP_DATABASE_URL` unset and skip the
+`lylo_app_login` LOGIN role — `npm start` will succeed without
+them. (The CI integration-tests job sets them because the
+GM-17/GM-18/GM-19/GM-20/GM-23/GM-24/GM-25/GM-26/GM-27/GM-28/GM-29 integration suites exercise
 all the relevant libraries through the same LOGIN role a future
 production caller would use.)
 
@@ -296,7 +301,7 @@ environment variables and roles as required for that process.
 |---|---|---|
 | `LYLO_RUNTIME_DATABASE_URL` | Runtime | Connection string for a LOGIN role whose effective identity is `lylo_runtime` (SELECT on the four config tables only). Opaque string; never logged. |
 | `LYLO_SETUP_DATABASE_URL` | Provisioning script | Connection string for a LOGIN role whose effective identity is `lylo_setup` (BYPASSRLS; INSERT/SELECT on the config tables + `users`). Opaque string; never logged. |
-| `LYLO_APP_DATABASE_URL` | Memory-governance module (GM-17) + all six governance-staging substrates (GM-23 through GM-28) | Connection string for a LOGIN role whose effective identity is `lylo_app` (SELECT on memory + supporting tables; INSERT on `memory_store`, `governance_audit_log`, and the six governance-staging tables `governance_review_queue`, `governance_review_decisions`, `governance_execution_authorizations`, `governance_execution_claims`, `governance_execution_attempts`, `governance_execution_outcomes`; `UPDATE (revoked_at)` on `memory_vault_sessions`). **DO NOT grant BYPASSRLS** — see "LOGIN role provisioning" below. Read by `src/memory/client.js` and `src/review/client.js`. Required only when a process consumes the memory or review modules; `parseEnv` does not require it because boot does not mount either. |
+| `LYLO_APP_DATABASE_URL` | Memory-governance module (GM-17) + all seven governance-staging substrates (GM-23 through GM-29) | Connection string for a LOGIN role whose effective identity is `lylo_app` (SELECT on memory + supporting tables; INSERT on `memory_store`, `governance_audit_log`, and the seven governance-staging tables `governance_review_queue`, `governance_review_decisions`, `governance_execution_authorizations`, `governance_execution_claims`, `governance_execution_attempts`, `governance_execution_outcomes`, `governance_execution_verifications`; `UPDATE (revoked_at)` on `memory_vault_sessions`). **DO NOT grant BYPASSRLS** — see "LOGIN role provisioning" below. Read by `src/memory/client.js` and `src/review/client.js`. Required only when a process consumes the memory or review modules; `parseEnv` does not require it because boot does not mount either. |
 | `LYLO_PILOT_INSTANCE_ID` | Runtime | UUID of the pilot this process serves. Set on `app.pilot_instance_id` inside every loader transaction so tenant-scoped RLS narrows reads. Required; missing or non-UUID values yield `configuration-invalid`. |
 | `LYLO_SHELL_MODE` | Runtime | `true` to mount the runtime; `false` (default) is `inert`. |
 
