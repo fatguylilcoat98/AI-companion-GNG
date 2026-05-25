@@ -1301,16 +1301,16 @@ test('real-schema: governance_execution_outcomes INSERT — self-recording rejec
     'INSERT INTO governance_review_queue '
       + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
       + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
-    ['aaaaaaaa-eeee-1111-1111-700000088881', PILOT_A, SENIOR_A]
+    ['aaaaaaaa-eeee-1111-1111-700000066661', PILOT_A, SENIOR_A]
   );
   await c.query(
     'INSERT INTO governance_review_decisions '
       + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
       + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
     [
-      'aaaaaaaa-dddd-1111-1111-800000088881',
+      'aaaaaaaa-dddd-1111-1111-800000066661',
       PILOT_A,
-      'aaaaaaaa-eeee-1111-1111-700000088881',
+      'aaaaaaaa-eeee-1111-1111-700000066661',
       ADMIN_A,
     ]
   );
@@ -1319,9 +1319,9 @@ test('real-schema: governance_execution_outcomes INSERT — self-recording rejec
       + '(id, pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
       + "VALUES ($1, $2, $3, $4, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
     [
-      'aaaaaaaa-cccc-1111-1111-900000088881',
+      'aaaaaaaa-cccc-1111-1111-900000066661',
       PILOT_A,
-      'aaaaaaaa-dddd-1111-1111-800000088881',
+      'aaaaaaaa-dddd-1111-1111-800000066661',
       ADMIN2_A,
     ]
   );
@@ -1330,9 +1330,9 @@ test('real-schema: governance_execution_outcomes INSERT — self-recording rejec
       + '(id, pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
       + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
     [
-      'aaaaaaaa-bbbb-1111-1111-a00000088881',
+      'aaaaaaaa-bbbb-1111-1111-a00000066661',
       PILOT_A,
-      'aaaaaaaa-cccc-1111-1111-900000088881',
+      'aaaaaaaa-cccc-1111-1111-900000066661',
       ADMIN3_A,
     ]
   );
@@ -1341,9 +1341,9 @@ test('real-schema: governance_execution_outcomes INSERT — self-recording rejec
       + '(id, pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
       + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
     [
-      'aaaaaaaa-aaaa-1111-1111-c00000088881',
+      'aaaaaaaa-aaaa-1111-1111-c00000066661',
       PILOT_A,
-      'aaaaaaaa-bbbb-1111-1111-a00000088881',
+      'aaaaaaaa-bbbb-1111-1111-a00000066661',
       ADMIN4_A,
     ]
   );
@@ -1353,7 +1353,7 @@ test('real-schema: governance_execution_outcomes INSERT — self-recording rejec
       'INSERT INTO governance_execution_outcomes '
         + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
         + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', 'reported_completed', $3, 'admin')",
-      [PILOT_A, 'aaaaaaaa-aaaa-1111-1111-c00000088881', ADMIN4_A]
+      [PILOT_A, 'aaaaaaaa-aaaa-1111-1111-c00000066661', ADMIN4_A]
     ),
     /self-recording forbidden/i
   );
@@ -1365,16 +1365,16 @@ test('real-schema: governance_execution_outcomes INSERT — scope drift rejected
     'INSERT INTO governance_review_queue '
       + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
       + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
-    ['aaaaaaaa-eeee-1111-1111-700000088882', PILOT_A, SENIOR_A]
+    ['aaaaaaaa-eeee-1111-1111-700000066662', PILOT_A, SENIOR_A]
   );
   await c.query(
     'INSERT INTO governance_review_decisions '
       + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
       + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
     [
-      'aaaaaaaa-dddd-1111-1111-800000088882',
+      'aaaaaaaa-dddd-1111-1111-800000066662',
       PILOT_A,
-      'aaaaaaaa-eeee-1111-1111-700000088882',
+      'aaaaaaaa-eeee-1111-1111-700000066662',
       ADMIN_A,
     ]
   );
@@ -1383,9 +1383,9 @@ test('real-schema: governance_execution_outcomes INSERT — scope drift rejected
       + '(id, pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
       + "VALUES ($1, $2, $3, $4, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
     [
-      'aaaaaaaa-cccc-1111-1111-900000088882',
+      'aaaaaaaa-cccc-1111-1111-900000066662',
       PILOT_A,
-      'aaaaaaaa-dddd-1111-1111-800000088882',
+      'aaaaaaaa-dddd-1111-1111-800000066662',
       ADMIN2_A,
     ]
   );
@@ -1394,9 +1394,9 @@ test('real-schema: governance_execution_outcomes INSERT — scope drift rejected
       + '(id, pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
       + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
     [
-      'aaaaaaaa-bbbb-1111-1111-a00000088882',
+      'aaaaaaaa-bbbb-1111-1111-a00000066662',
       PILOT_A,
-      'aaaaaaaa-cccc-1111-1111-900000088882',
+      'aaaaaaaa-cccc-1111-1111-900000066662',
       ADMIN3_A,
     ]
   );
@@ -1405,9 +1405,9 @@ test('real-schema: governance_execution_outcomes INSERT — scope drift rejected
       + '(id, pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
       + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
     [
-      'aaaaaaaa-aaaa-1111-1111-c00000088882',
+      'aaaaaaaa-aaaa-1111-1111-c00000066662',
       PILOT_A,
-      'aaaaaaaa-bbbb-1111-1111-a00000088882',
+      'aaaaaaaa-bbbb-1111-1111-a00000066662',
       ADMIN4_A,
     ]
   );
@@ -1417,7 +1417,7 @@ test('real-schema: governance_execution_outcomes INSERT — scope drift rejected
       'INSERT INTO governance_execution_outcomes '
         + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
         + "VALUES ($1, $2, 'future_vault_action', 'future_vault_action_consumer', 'reported_completed', $3, 'admin')",
-      [PILOT_A, 'aaaaaaaa-aaaa-1111-1111-c00000088882', ADMIN5_A]
+      [PILOT_A, 'aaaaaaaa-aaaa-1111-1111-c00000066662', ADMIN5_A]
     ),
     /authorization_scope drift/i
   );
@@ -1431,16 +1431,16 @@ test('real-schema: governance_execution_outcomes INSERT — surface drift reject
     'INSERT INTO governance_review_queue '
       + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
       + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
-    ['aaaaaaaa-eeee-1111-1111-700000088883', PILOT_A, SENIOR_A]
+    ['aaaaaaaa-eeee-1111-1111-700000066663', PILOT_A, SENIOR_A]
   );
   await c.query(
     'INSERT INTO governance_review_decisions '
       + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
       + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
     [
-      'aaaaaaaa-dddd-1111-1111-800000088883',
+      'aaaaaaaa-dddd-1111-1111-800000066663',
       PILOT_A,
-      'aaaaaaaa-eeee-1111-1111-700000088883',
+      'aaaaaaaa-eeee-1111-1111-700000066663',
       ADMIN_A,
     ]
   );
@@ -1449,9 +1449,9 @@ test('real-schema: governance_execution_outcomes INSERT — surface drift reject
       + '(id, pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
       + "VALUES ($1, $2, $3, $4, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
     [
-      'aaaaaaaa-cccc-1111-1111-900000088883',
+      'aaaaaaaa-cccc-1111-1111-900000066663',
       PILOT_A,
-      'aaaaaaaa-dddd-1111-1111-800000088883',
+      'aaaaaaaa-dddd-1111-1111-800000066663',
       ADMIN2_A,
     ]
   );
@@ -1460,9 +1460,9 @@ test('real-schema: governance_execution_outcomes INSERT — surface drift reject
       + '(id, pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
       + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
     [
-      'aaaaaaaa-bbbb-1111-1111-a00000088883',
+      'aaaaaaaa-bbbb-1111-1111-a00000066663',
       PILOT_A,
-      'aaaaaaaa-cccc-1111-1111-900000088883',
+      'aaaaaaaa-cccc-1111-1111-900000066663',
       ADMIN3_A,
     ]
   );
@@ -1471,9 +1471,9 @@ test('real-schema: governance_execution_outcomes INSERT — surface drift reject
       + '(id, pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
       + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
     [
-      'aaaaaaaa-aaaa-1111-1111-c00000088883',
+      'aaaaaaaa-aaaa-1111-1111-c00000066663',
       PILOT_A,
-      'aaaaaaaa-bbbb-1111-1111-a00000088883',
+      'aaaaaaaa-bbbb-1111-1111-a00000066663',
       ADMIN4_A,
     ]
   );
@@ -1483,7 +1483,7 @@ test('real-schema: governance_execution_outcomes INSERT — surface drift reject
       'INSERT INTO governance_execution_outcomes '
         + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
         + "VALUES ($1, $2, 'memory_candidate_admission', 'future_vault_action_consumer', 'reported_completed', $3, 'admin')",
-      [PILOT_A, 'aaaaaaaa-aaaa-1111-1111-c00000088883', ADMIN5_A]
+      [PILOT_A, 'aaaaaaaa-aaaa-1111-1111-c00000066663', ADMIN5_A]
     ),
     /execution_surface drift/i
   );
