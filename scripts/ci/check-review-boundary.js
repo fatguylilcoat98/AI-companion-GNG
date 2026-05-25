@@ -59,6 +59,7 @@ const SELECT_ALLOWED_TABLES = new Set([
   'governance_execution_claims',
   'governance_execution_attempts',
   'governance_execution_outcomes',
+  'governance_execution_verifications',
   'users',
   'pilot_instances',
 ]);
@@ -70,6 +71,7 @@ const INSERT_ALLOWED_TABLES = new Set([
   'governance_execution_claims',
   'governance_execution_attempts',
   'governance_execution_outcomes',
+  'governance_execution_verifications',
 ]);
 
 // All write/DDL keywords except INSERT (which is permitted but
@@ -292,6 +294,43 @@ const FILE_SCOPED_SCANS = [
       { re: /\breal\b/, label: 'real (outcome row is NOT a claim about real state)' },
       { re: /\breality\b/, label: 'reality (outcome row is NOT reality)' },
       { re: /\btruth\b/, label: 'truth (AN OUTCOME ROW IS NOT TRUTH)' },
+    ],
+  },
+  // GM-29: execution-verification ledger actor. "VERIFICATION ≠
+  // RECONCILIATION ≠ REPAIR." Per OQ-29.10(b), modified by the
+  // owner-noted exception that bare `execute` and `dispatch` are
+  // dropped (they would collide with the actor contract method
+  // name); past-tense `executed` and `dispatched` are retained.
+  // 20 words total: 12 operational/repair words + 8 fix-it
+  // temptation words. K24 is the third file-scoped scan; the
+  // verification-ledger actor records observations through named
+  // evidence channels and must contain none of these as bare
+  // identifiers.
+  {
+    file: 'src/actors/execution-verification-ledger-actor.js',
+    forbidden: [
+      // Operational / repair vocabulary (12).
+      { re: /\bexecuted\b/, label: 'executed (verification is NOT execution)' },
+      { re: /\bdispatched\b/, label: 'dispatched (verification is NOT dispatch)' },
+      { re: /\bretry\b/, label: 'retry (VERIFICATION ≠ RETRY)' },
+      { re: /\bretried\b/, label: 'retried (verification is NOT a retry)' },
+      { re: /\breconcile\b/, label: 'reconcile (VERIFICATION ≠ RECONCILIATION)' },
+      { re: /\breconciled\b/, label: 'reconciled (verification is NOT reconciliation)' },
+      { re: /\brollback\b/, label: 'rollback (verification is NOT rollback)' },
+      { re: /\bcompensate\b/, label: 'compensate (verification is NOT compensation)' },
+      { re: /\bside_effect\b/, label: 'side_effect (verification has NO side effects)' },
+      { re: /\bmutate\b/, label: 'mutate (verification mutates NOTHING)' },
+      { re: /\bpromote\b/, label: 'promote (verification does NOT promote anything)' },
+      { re: /\badmit\b/, label: 'admit (verification does NOT admit anything to a downstream surface)' },
+      // Fix-it temptation vocabulary (8).
+      { re: /\bfix\b/, label: 'fix (VERIFICATION ≠ REPAIR)' },
+      { re: /\brepair\b/, label: 'repair (VERIFICATION ≠ REPAIR)' },
+      { re: /\bcorrect\b/, label: 'correct (verification does NOT correct anything)' },
+      { re: /\bheal\b/, label: 'heal (verification does NOT heal)' },
+      { re: /\bresolve\b/, label: 'resolve (verification does NOT resolve disputes)' },
+      { re: /\brevert\b/, label: 'revert (verification does NOT revert)' },
+      { re: /\bundo\b/, label: 'undo (verification does NOT undo)' },
+      { re: /\bapply\b/, label: 'apply (verification does NOT apply a change)' },
     ],
   },
 ];

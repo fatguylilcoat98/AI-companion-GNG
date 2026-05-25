@@ -189,6 +189,13 @@ function classifyExecutionIntent(intent) {
         reason: REASONS.EXECUTION_OUTCOME_RECORDING_PERMITTED,
       });
 
+    case INTENT_TYPES.GOVERNANCE_EXECUTION_VERIFY:
+      return _createDecision({
+        intentType: intent.type,
+        decision: DECISION_OUTCOMES.ADMISSIBLE,
+        reason: REASONS.EXECUTION_VERIFICATION_RECORDING_PERMITTED,
+      });
+
     default:
       // Belt-and-suspenders: the type was in ALL_INTENT_TYPES (passed
       // the membership check above) but no branch matched. This is a

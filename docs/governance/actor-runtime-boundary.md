@@ -79,7 +79,7 @@ and may extend the boundary guard's allowed-import list (e.g. to
 permit `../memory` entry imports). Every such extension is a
 deliberate boundary change.
 
-## 2. Public API surface (GM-22 through GM-28)
+## 2. Public API surface (GM-22 through GM-29)
 
 | Export | Purpose |
 |---|---|
@@ -90,7 +90,8 @@ deliberate boundary change.
 | `createExecutionClaimLedgerActor({reviewQueuePool, log?})` | GM-26. Records an admin's explicit single-consumption claim of an authorization for a specific future execution surface, into `governance_execution_claims`. **Admin role only**; **claimant ≠ authorizer**; **scope equality with authorization**; **surface ↔ scope 1:1 mapping**; underlying review must still be **approved**. `UNIQUE(execution_authorization_id)` is the **replay-prevention wall**. Claim is NOT execution; claim is NOT dispatch; claim is NOT completion; claim is NOT success. |
 | `createExecutionAttemptLedgerActor({reviewQueuePool, log?})` | GM-27. Records that an admin BEGAN an execution attempt against a claim, into `governance_execution_attempts`. **Admin role only**; **attempter ≠ claimant**; **scope equality with claim**; **surface equality with claim**; underlying review must still be **approved**. `UNIQUE(execution_claim_id)` forbids retry / multi-attempt. **ATTEMPT IS NOT OUTCOME** — records ONLY the beginning of an attempt; never success, failure, completion, interruption, delivery, dispatch, finalization, or commit. |
 | `createExecutionOutcomeLedgerActor({reviewQueuePool, log?})` | GM-28. Records that an admin OBSERVED an apparent end state for a recorded attempt, into `governance_execution_outcomes`. **Admin role only**; **recorder ≠ attempter**; **scope equality with attempt**; **surface equality with attempt**; underlying review must still be **approved**. `UNIQUE(execution_attempt_id)` forbids replay. `outcome_type` is CHECK-locked to the 4 `reported_*` values. **AN OUTCOME ROW IS NOT TRUTH** — `reported_completed` ≠ `verified_completed`; the `reported_*` prefix is a constitutional defense, not a naming convention. Outcomes are OPTIONAL; absence is NOT itself an outcome. |
-| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED, AUTHORIZED_RECORDED, CLAIM_RECORDED, ATTEMPT_RECORDED, OUTCOME_RECORDED}` enum. `OUTCOME_RECORDED` is the GM-28 addition; the nine-way set is snapshot-locked in the adversarial suite (C4). |
+| `createExecutionVerificationLedgerActor({reviewQueuePool, log?})` | GM-29. Records that a separate admin independently CHECKED a reported outcome, into `governance_execution_verifications`. **Admin role only**; **verifier ≠ recorder**; underlying review must still be **approved**. `UNIQUE(execution_outcome_id)` forbids replay. `verification_type` is CHECK-locked to 4 channel values; `verification_result` is CHECK-locked to 3 values with the `verified_*` prefix constitutionally isolated to this table. **VERIFICATION ≠ RECONCILIATION ≠ REPAIR** — `verified_consistent` ≠ truth; `verification_inconclusive` ≠ retry / escalate / "someone must act." Verifications are OPTIONAL; absence is NOT itself a verification result. No `verification_basis` field — GM-29 stores governance metadata only. |
+| `OUTCOMES` | Frozen `{EXECUTED, ABSTAINED, REJECTED, STAGED, RECORDED, AUTHORIZED_RECORDED, CLAIM_RECORDED, ATTEMPT_RECORDED, OUTCOME_RECORDED, VERIFICATION_RECORDED}` enum. `VERIFICATION_RECORDED` is the GM-29 addition; the ten-way set is snapshot-locked in the adversarial suite (C4). |
 
 Internal helpers (`verifyDecisionOrThrow`, `validateParams`,
 `isConversationRuntime`, `isReviewQueuePool`) are NOT re-exported
@@ -449,6 +450,91 @@ See `execution-outcome-runtime-boundary.md` for the full
 substrate contract, including the ten-question "What remains
 unresolved" enumeration that the future-verification GM must
 explicitly address.
+
+### 4g. The execution-verification-ledger actor (GM-29) — nine-layer chain + dual vocabulary locks + operational/repair forbidden-words list
+
+The execution-verification-ledger actor mirrors GM-28's
+structural shape but with operational AND fix-it vocabulary
+discipline instead of truth-claim discipline. The actor file
+is mechanically forbidden by the boundary guard from
+containing any of TWENTY bare identifiers: 12 operational /
+repair words (`executed`, `dispatched`, `retry`, `retried`,
+`reconcile`, `reconciled`, `rollback`, `compensate`,
+`side_effect`, `mutate`, `promote`, `admit`) plus 8 fix-it
+temptation words (`fix`, `repair`, `correct`, `heal`,
+`resolve`, `revert`, `undo`, `apply`). Bare `execute` and
+`dispatch` are deliberately omitted because they would collide
+with the actor contract method name `execute(decision, params)`;
+past-tense forms (`executed` / `dispatched`) catch the
+semantic temptation that matters.
+
+Verification chain:
+
+| # | Check | Catches |
+|---|---|---|
+| 4 | `decision.intentType === INTENT_TYPES.GOVERNANCE_EXECUTION_VERIFY` | Wrong intent type |
+| 7 | `params.userRole === 'admin'` | Non-admin |
+| 8 | `params.verificationType ∈ VERIFICATION_TYPES` (4-value channel vocab) | Vocab |
+| 9 | `params.verificationResult ∈ VERIFICATION_RESULTS` (3-value vocab; `verified_*` isolated to this table) | Vocab |
+
+Plus UUID validation on `pilotInstanceId` / `userId` /
+`executionOutcomeId`. The actor rejects smuggled vocabulary
+(`verified_succeeded`, `verified_failed`, `verified_completed`,
+`reported_completed`, uppercase variants) BEFORE opening a
+connection.
+
+The **three DB-side data preconditions** (outcome exists in
+same pilot; verifier ≠ recorder; 7-deep chain walks to
+`review_outcome = 'approved'`) are NOT duplicated at the actor
+— they live in the BEFORE-INSERT trigger.
+
+Outcome routing:
+
+| Conditions | Action | Outcome shape |
+|---|---|---|
+| All nine layers + vocabulary preconditions pass + DB trigger passes + UNIQUE not violated | One INSERT into `governance_execution_verifications` via `withReviewContext` | `{outcome: 'verification_recorded', decision, verificationId, createdAt}` |
+| Any actor-layer failure | THROW (before any DB call) | — |
+| DB trigger, CHECK, or UNIQUE raises | THROW (wrapped in `ReviewRepositoryError`) | — |
+
+The substrate has **no consumer** in GM-29 (per constitutional
+addendum 3). The `OUTCOMES.VERIFICATION_RECORDED` value names
+the act of recording a verifier's check — it does **not** mean
+anything is true, was repaired, was reconciled, or had any
+operational effect. Four adversarial canaries enforce the
+inertness mechanically:
+
+- **K22 — static-scan canary**: asserts zero references to
+  `governance_execution_verifications` outside the documented
+  writing path. **Continuously enforced per constitutional
+  addendum 3.**
+- **K24 — file-scoped forbidden-vocabulary scan**: asserts the
+  actor file contains none of the 20 forbidden words above.
+- **K27 — doc-presence canary**: asserts the boundary doc
+  retains all four required sections (`## What this is NOT`,
+  `## What remains unresolved`, `## Verification is not
+  reconciliation`, `## Verification does not execute or
+  repair`) AND the verbatim phrase
+  `verification ≠ reconciliation ≠ repair`.
+- **K37 — vocabulary isolation**: asserts
+  `VERIFICATION_TYPES` has exactly 4 values, `VERIFICATION_RESULTS`
+  has exactly 3 values, and the `verified_*` prefix does NOT
+  appear in `EXECUTION_OUTCOME_TYPES`.
+
+**The constitutional rule (extended at GM-29, now at seven
+levels):** *approval is not authorization; authorization is not
+execution; an authorization row is NOT an execution signal; a
+claim row is NOT execution — it only records single-consumption;
+an attempt row is NOT an outcome — it only records the
+beginning of an attempt; an outcome row is NOT truth — it only
+records what a human reported observing; **a verification row
+is NOT truth — it only records that a separate human
+independently CHECKED the report and what they observed through
+a named evidence channel.***
+
+See `execution-verification-runtime-boundary.md` for the full
+substrate contract, including the twelve-question "What remains
+unresolved" enumeration that the future-conflict-resolution /
+canonical-state GM must explicitly address.
 
 ## 5. The conversation runtime is unchanged
 

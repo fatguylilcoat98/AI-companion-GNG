@@ -1521,3 +1521,173 @@ test('real-schema: governance_execution_outcomes append-only — DELETE raises',
     /append.only/i
   );
 });
+
+// ---------------------------------------------------------------------
+// governance_execution_verifications (GM-29) — real-schema RLS,
+// triggers, and constraints. The synthetic suite covers
+// visibility; this suite covers the BEFORE-INSERT trigger
+// (self-verification rejection, missing-outcome rejection, chain
+// rot), replay UNIQUE, and append-only enforcement.
+// Constitutional rule: VERIFICATION ≠ RECONCILIATION ≠ REPAIR.
+// ---------------------------------------------------------------------
+
+const ADMIN6_A = 'aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa';
+const VERIFICATION_A_SEEDED = 'aaaaaaaa-8888-1111-1111-100000000001';
+const OUTCOME_A_SEEDED = 'aaaaaaaa-9999-1111-1111-e00000000001';
+
+test('real-schema: governance_execution_verifications — admin sees verification rows in pilot', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_verifications', 'id');
+    assert.ok(ids.includes(VERIFICATION_A_SEEDED), 'admin must see seeded VERIFICATION_A');
+  });
+});
+
+test('real-schema: governance_execution_verifications — proposer / family see nothing', async () => {
+  const c = await setup();
+  for (const [user, role] of [[SENIOR_A, 'senior'], [FAMILY_A, 'family']]) {
+    await withContext(c, { role: 'lylo_app', pilot: PILOT_A, user, userRole: role }, async (client) => {
+      assert.deepEqual(await visibleIds(client, 'governance_execution_verifications', 'id'), []);
+    });
+  }
+});
+
+test('real-schema: governance_execution_verifications — lylo_runtime denied at GRANT layer', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_verifications'),
+      /permission denied/i
+    );
+  });
+});
+
+test('real-schema: governance_execution_verifications INSERT — self-verification rejected by BEFORE-INSERT trigger', async () => {
+  // Build a fresh chain via superuser, with admin5 as outcome
+  // recorder. Then try to record a verification by admin5 — same
+  // human as the recorder — and confirm the trigger raises.
+  const c = await setup();
+  await c.query(
+    'INSERT INTO governance_review_queue '
+      + '(id, pilot_instance_id, decision_intent_type, decision_reason, decision_policy_ref, proposer_user_id, proposer_role) '
+      + "VALUES ($1, $2, 'memory.candidate.create', 'ai_inferred_requires_review', 'x', $3, 'senior')",
+    ['aaaaaaaa-eeee-1111-1111-700000055551', PILOT_A, SENIOR_A]
+  );
+  await c.query(
+    'INSERT INTO governance_review_decisions '
+      + '(id, pilot_instance_id, review_queue_id, reviewer_user_id, reviewer_role, review_outcome, review_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'approved', 'approved_admin_review')",
+    [
+      'aaaaaaaa-dddd-1111-1111-800000055551',
+      PILOT_A,
+      'aaaaaaaa-eeee-1111-1111-700000055551',
+      ADMIN_A,
+    ]
+  );
+  await c.query(
+    'INSERT INTO governance_execution_authorizations '
+      + '(id, pilot_instance_id, review_decision_id, authorized_by_user_id, authorized_by_role, authorization_scope, authorization_reason) '
+      + "VALUES ($1, $2, $3, $4, 'admin', 'memory_candidate_admission', 'admin_explicit_authorization')",
+    [
+      'aaaaaaaa-cccc-1111-1111-900000055551',
+      PILOT_A,
+      'aaaaaaaa-dddd-1111-1111-800000055551',
+      ADMIN2_A,
+    ]
+  );
+  await c.query(
+    'INSERT INTO governance_execution_claims '
+      + '(id, pilot_instance_id, execution_authorization_id, authorization_scope, execution_surface, claimed_by_user_id, claimed_by_role) '
+      + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
+    [
+      'aaaaaaaa-bbbb-1111-1111-a00000055551',
+      PILOT_A,
+      'aaaaaaaa-cccc-1111-1111-900000055551',
+      ADMIN3_A,
+    ]
+  );
+  await c.query(
+    'INSERT INTO governance_execution_attempts '
+      + '(id, pilot_instance_id, execution_claim_id, authorization_scope, execution_surface, attempted_by_user_id, attempted_by_role) '
+      + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', $4, 'admin')",
+    [
+      'aaaaaaaa-aaaa-1111-1111-c00000055551',
+      PILOT_A,
+      'aaaaaaaa-bbbb-1111-1111-a00000055551',
+      ADMIN4_A,
+    ]
+  );
+  await c.query(
+    'INSERT INTO governance_execution_outcomes '
+      + '(id, pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
+      + "VALUES ($1, $2, $3, 'memory_candidate_admission', 'future_memory_admission_consumer', 'reported_completed', $4, 'admin')",
+    [
+      'aaaaaaaa-9999-1111-1111-e00000055551',
+      PILOT_A,
+      'aaaaaaaa-aaaa-1111-1111-c00000055551',
+      ADMIN5_A,
+    ]
+  );
+  // Now try to verify as ADMIN5_A — same human who recorded the outcome.
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_verifications '
+        + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+        + "VALUES ($1, $2, $3, 'admin', 'human_observation', 'verified_consistent')",
+      [PILOT_A, 'aaaaaaaa-9999-1111-1111-e00000055551', ADMIN5_A]
+    ),
+    /self-verification forbidden/i
+  );
+});
+
+test('real-schema: governance_execution_verifications INSERT — missing outcome rejected by trigger', async () => {
+  const c = await setup();
+  // Reference an outcome ID that does not exist in pilot A.
+  await assert.rejects(
+    () => c.query(
+      'INSERT INTO governance_execution_verifications '
+        + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+        + "VALUES ($1, $2, $3, 'admin', 'human_observation', 'verified_consistent')",
+      [PILOT_A, '00000000-0000-0000-0000-000000000999', ADMIN6_A]
+    ),
+    /not found|foreign key/i
+  );
+});
+
+test('real-schema: governance_execution_verifications INSERT — replay (duplicate verification) rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN6_A, userRole: 'admin',
+  }, async (client) => {
+    // OUTCOME_A_SEEDED already has VERIFICATION_A_SEEDED.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_verifications '
+          + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+          + "VALUES ($1, $2, $3, 'admin', 'system_log_review', 'verification_inconclusive')",
+        [PILOT_A, OUTCOME_A_SEEDED, ADMIN6_A]
+      ),
+      /duplicate key|unique/i
+    );
+  });
+});
+
+test('real-schema: governance_execution_verifications append-only — UPDATE raises', async () => {
+  const c = await setup();
+  await assert.rejects(
+    () => c.query("UPDATE governance_execution_verifications SET verification_result = 'verification_inconclusive' WHERE id = $1", [VERIFICATION_A_SEEDED]),
+    /append.only/i
+  );
+});
+
+test('real-schema: governance_execution_verifications append-only — DELETE raises', async () => {
+  const c = await setup();
+  await assert.rejects(
+    () => c.query('DELETE FROM governance_execution_verifications WHERE id = $1', [VERIFICATION_A_SEEDED]),
+    /append.only/i
+  );
+});

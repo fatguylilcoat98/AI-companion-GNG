@@ -266,13 +266,14 @@ test('C1. EVENT_TYPES snapshot: the GM-18-locked memory-audit vocabulary is unch
   // they don't go through governance_audit_log.
 });
 
-test('C2. REASONS snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 additions.', () => {
+test('C2. REASONS snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 + GM-29 additions.', () => {
   const SNAPSHOT = [
     'ai_inferred_requires_review',
     'execution_attempt_recording_permitted',
     'execution_authorization_recording_permitted',
     'execution_claim_recording_permitted',
     'execution_outcome_recording_permitted',
+    'execution_verification_recording_permitted',
     'external_side_effects_not_authorized',
     'malformed_intent_payload',
     'response_delivery_permitted',
@@ -290,13 +291,14 @@ test('C2. REASONS snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 additi
     'governance REASONS snapshot drifted — adding reasons requires paired updates to docs/governance/');
 });
 
-test('C3. INTENT_TYPES snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 additions.', () => {
+test('C3. INTENT_TYPES snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 + GM-29 additions.', () => {
   const SNAPSHOT = [
     'external.side_effect',
     'governance.execution.attempt',
     'governance.execution.authorize',
     'governance.execution.claim',
     'governance.execution.outcome.record',
+    'governance.execution.verify',
     'governance.review.decide',
     'memory.candidate.create',
     'memory.retract',
@@ -311,14 +313,14 @@ test('C3. INTENT_TYPES snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 a
     'INTENT_TYPES snapshot drifted — adding intent types requires paired updates to docs/governance/');
 });
 
-test('C4. OUTCOMES snapshot: GM-22 through GM-27 + the GM-28 addition (outcome_recorded).', () => {
-  // GM-28 added exactly one actor outcome. The nine-way set is
+test('C4. OUTCOMES snapshot: GM-22 through GM-28 + the GM-29 addition (verification_recorded).', () => {
+  // GM-29 added exactly one actor outcome. The ten-way set is
   // locked here; any future widening must update this snapshot
   // alongside docs/governance/actor-runtime-boundary.md.
   const SNAPSHOT = [
     'abstained', 'attempt_recorded', 'authorized_recorded',
     'claim_recorded', 'executed', 'outcome_recorded',
-    'recorded', 'rejected', 'staged',
+    'recorded', 'rejected', 'staged', 'verification_recorded',
   ];
   const current = Object.values(OUTCOMES).sort();
   assert.deepEqual(current, SNAPSHOT.sort(),
@@ -1803,5 +1805,268 @@ test('J37. EXECUTION_OUTCOME_TYPES snapshot: exactly 4 values, all reported_* pr
     assert.match(v, /^reported_/,
       `J37: EXECUTION_OUTCOME_TYPES value "${v}" must be reported_* prefixed `
       + '(AN OUTCOME ROW IS NOT TRUTH — the prefix puts that fact into the data)');
+  }
+});
+
+// ===================================================================
+// K-series — GM-29 execution-verification ledger actor.
+//
+// Constitutional invariant: VERIFICATION ≠ RECONCILIATION ≠ REPAIR.
+// A verification row is epistemic, not authoritative.
+// `verified_consistent` ≠ truth. `verification_inconclusive` ≠
+// retry / escalate / "someone must act." The `verified_*`
+// prefix is constitutionally isolated to the verification
+// artifact only.
+// ===================================================================
+
+const { createExecutionVerificationLedgerActor } = require('../../src/actors');
+
+const ADMIN_K = 'aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa';
+const OUTCOME_K = 'aaaaaaaa-9999-1111-1111-e00000000001';
+const PILOT_K = '11111111-1111-1111-1111-111111111111';
+
+function mockReviewPoolK() {
+  let connectCalls = 0;
+  const client = {
+    async query(text) {
+      if (/RETURNING/i.test(text)) {
+        return { rows: [{ id: 'ffffffff-1111-1111-1111-ffffffffffff', created_at: new Date() }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => {},
+  };
+  return {
+    connect: async () => { connectCalls += 1; return client; },
+    getConnectCalls: () => connectCalls,
+  };
+}
+
+function verifyDecisionK() {
+  return classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_VERIFY });
+}
+
+function baseParamsK(overrides) {
+  return Object.assign(
+    {
+      pilotInstanceId: PILOT_K,
+      userId: ADMIN_K,
+      userRole: 'admin',
+      executionOutcomeId: OUTCOME_K,
+      verificationType: 'human_observation',
+      verificationResult: 'verified_consistent',
+    },
+    overrides || {}
+  );
+}
+
+test('K1. Plain-object Decision to verification-ledger actor → throws (instanceof fails); pool not consulted.', async () => {
+  const pool = mockReviewPoolK();
+  const actor = createExecutionVerificationLedgerActor({ reviewQueuePool: pool });
+  const fake = Object.freeze({
+    intentType: 'governance.execution.verify',
+    decision: 'admissible',
+    reason: 'execution_verification_recording_permitted',
+    policyRef: 'execution-verification-runtime-boundary.md §3',
+  });
+  await assert.rejects(() => actor.execute(fake, baseParamsK()), /must be a Decision instance/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('K2. Prototype-tampered Decision passes instanceof but isValidDecision rejects → throws.', async () => {
+  const pool = mockReviewPoolK();
+  const actor = createExecutionVerificationLedgerActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_VERIFY,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_VERIFICATION_RECORDING_PERMITTED,
+    policyRef: 'execution-verification-runtime-boundary.md §3',
+  };
+  Object.setPrototypeOf(fake, Decision.prototype);
+  Object.freeze(fake);
+  assert.ok(fake instanceof Decision);
+  await assert.rejects(() => actor.execute(fake, baseParamsK()),
+    /not produced by classifyExecutionIntent/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('K3. Real Decision with wrong intent type (governance.execution.outcome.record) → throws (layer-4).', async () => {
+  const pool = mockReviewPoolK();
+  const actor = createExecutionVerificationLedgerActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_OUTCOME_RECORD });
+  await assert.rejects(() => actor.execute(wrong, baseParamsK()),
+    /decision\.intentType must be "governance\.execution\.verify"/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('K5. Non-admin userRole rejected BEFORE pool.connect.', async () => {
+  const pool = mockReviewPoolK();
+  const actor = createExecutionVerificationLedgerActor({ reviewQueuePool: pool });
+  const decision = verifyDecisionK();
+  await assert.rejects(() => actor.execute(decision, baseParamsK({ userRole: 'senior' })),
+    /userRole must be "admin"/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('K14. Sentinel content in unknown params field never appears in captured logs.', async () => {
+  const SENTINEL = 'K14_SECRET_VERIFICATION_BASIS';
+  const pool = mockReviewPoolK();
+  const lines = [];
+  const log = {
+    info(event, fields) {
+      lines.push(JSON.stringify({ event, ...(fields || {}) }));
+    },
+  };
+  const actor = createExecutionVerificationLedgerActor({ reviewQueuePool: pool, log });
+  const decision = verifyDecisionK();
+  await actor.execute(decision, Object.assign(baseParamsK(), {
+    verificationBasis: SENTINEL,
+    payload: SENTINEL,
+    notes: SENTINEL,
+  }));
+  const text = lines.join('\n');
+  assert.ok(text.includes('actor.execution_verification.recorded'));
+  assert.equal(text.includes(SENTINEL), false,
+    'K14: sentinel content in unknown params field must not appear in logs');
+});
+
+test('K15. EVENT_TYPES snapshot still locked — GM-29 added NO new audit event types.', () => {
+  const memoryAudit = require('../../src/memory/audit');
+  const SNAPSHOT = ['memory.created', 'memory.list'];
+  const current = Object.values(memoryAudit.EVENT_TYPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'GM-29 must not widen memory EVENT_TYPES — the verifications table IS the artifact');
+});
+
+test('K22. Static scan: zero references to governance_execution_verifications outside the writing path.', () => {
+  // The K-series canary against accidental consumer introduction.
+  // Per constitutional addendum 3, K22 is continuously enforced.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const WRITING_PATH = new Set([
+    'src/review/repository.js',
+    'src/review/transaction.js',
+    'src/review/index.js',
+    'src/actors/execution-verification-ledger-actor.js',
+    'src/actors/outcomes.js',
+    'src/actors/index.js',
+    'scripts/ci/check-review-boundary.js',
+  ]);
+  function walk(rel, out) {
+    const abs = path.join(REPO, rel);
+    if (!fs.existsSync(abs)) return;
+    const st = fs.statSync(abs);
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(abs)) walk(`${rel}/${name}`, out);
+    } else if (rel.endsWith('.js')) {
+      out.push(rel);
+    }
+  }
+  const files = [];
+  for (const root of ['src', 'scripts/ci']) walk(root, files);
+  const leaks = [];
+  for (const rel of files) {
+    const content = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    if (content.includes('governance_execution_verifications') && !WRITING_PATH.has(rel)) {
+      leaks.push(rel);
+    }
+  }
+  assert.deepEqual(leaks, [],
+    'GM-29 canary: governance_execution_verifications referenced outside the writing path — '
+    + 'a future consumer may be leaking through. Files with leaks: ' + leaks.join(', '));
+});
+
+test('K24. File-scoped forbidden-vocabulary scan: execution-verification-ledger actor must not contain operational OR fix-it words.', () => {
+  // Per OQ-29.10(b), with the owner-noted resolution that bare
+  // `execute` and `dispatch` are dropped (they would collide with
+  // the actor contract method name `execute(decision, params)`).
+  // K24 keeps 20 words: 12 operational/repair + 8 fix-it
+  // temptation words.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const filePath = path.join(REPO, 'src/actors/execution-verification-ledger-actor.js');
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const FORBIDDEN = [
+    // Operational / repair vocabulary (12).
+    'executed', 'dispatched', 'retry', 'retried',
+    'reconcile', 'reconciled', 'rollback', 'compensate',
+    'side_effect', 'mutate', 'promote', 'admit',
+    // Fix-it temptation vocabulary (8).
+    'fix', 'repair', 'correct', 'heal',
+    'resolve', 'revert', 'undo', 'apply',
+  ];
+  const hits = FORBIDDEN.filter((w) => new RegExp('\\b' + w + '\\b').test(code));
+  assert.deepEqual(hits, [],
+    `K24: execution-verification-ledger actor contains forbidden vocabulary: ${hits.join(', ')}. `
+    + 'VERIFICATION ≠ RECONCILIATION ≠ REPAIR.');
+});
+
+test('K27. Doc-presence canary: execution-verification-runtime-boundary.md must contain all four required sections plus the verbatim line.', () => {
+  // Mirrors J27 but stricter — four mandatory sections instead
+  // of two (per OQ-29.13(a)) AND the verbatim line per
+  // constitutional addendum 9.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const docPath = path.join(REPO, 'docs/governance/execution-verification-runtime-boundary.md');
+  assert.ok(fs.existsSync(docPath),
+    'K27: docs/governance/execution-verification-runtime-boundary.md must exist');
+  const doc = fs.readFileSync(docPath, 'utf8');
+  assert.match(doc, /^## What this is NOT$/m,
+    'K27: doc must contain a "## What this is NOT" section');
+  assert.match(doc, /^## What remains unresolved$/m,
+    'K27: doc must contain a "## What remains unresolved" section');
+  assert.match(doc, /^## Verification is not reconciliation$/m,
+    'K27: doc must contain a "## Verification is not reconciliation" section');
+  assert.match(doc, /^## Verification does not execute or repair$/m,
+    'K27: doc must contain a "## Verification does not execute or repair" section');
+  // Constitutional addendum 9: verbatim phrase required.
+  assert.ok(doc.includes('verification ≠ reconciliation ≠ repair'),
+    'K27: doc must contain the verbatim phrase "verification ≠ reconciliation ≠ repair"');
+});
+
+test('K37. VERIFICATION_TYPES + VERIFICATION_RESULTS snapshots; verified_* prefix isolated from EXECUTION_OUTCOME_TYPES.', () => {
+  // The constitutional canary of GM-29. The `verified_*` prefix
+  // is the structural defense against truth-claim crossover
+  // between the outcome and verification substrates. K37
+  // asserts (1) exactly 4 verification_type values, (2) exactly
+  // 3 verification_result values, (3) NO `verified_*` value
+  // appears in EXECUTION_OUTCOME_TYPES.
+  const {
+    VALID_VERIFICATION_TYPES,
+    VALID_VERIFICATION_RESULTS,
+    VALID_EXECUTION_OUTCOME_TYPES,
+  } = require('../../src/review/repository');
+
+  const TYPES_SNAPSHOT = [
+    'database_state_check',
+    'external_confirmation',
+    'human_observation',
+    'system_log_review',
+  ];
+  const typesCurrent = Array.from(VALID_VERIFICATION_TYPES).sort();
+  assert.deepEqual(typesCurrent, TYPES_SNAPSHOT.sort(),
+    'VERIFICATION_TYPES snapshot drifted — the 4-value channel set is the constitutional design');
+  assert.equal(typesCurrent.length, 4, 'VERIFICATION_TYPES must contain exactly 4 values');
+
+  const RESULTS_SNAPSHOT = [
+    'verification_inconclusive',
+    'verified_consistent',
+    'verified_inconsistent',
+  ];
+  const resultsCurrent = Array.from(VALID_VERIFICATION_RESULTS).sort();
+  assert.deepEqual(resultsCurrent, RESULTS_SNAPSHOT.sort(),
+    'VERIFICATION_RESULTS snapshot drifted — the 3-value result set is the constitutional design');
+  assert.equal(resultsCurrent.length, 3, 'VERIFICATION_RESULTS must contain exactly 3 values');
+
+  // Constitutional addendum 4: `verified_*` MUST NEVER appear in
+  // EXECUTION_OUTCOME_TYPES.
+  for (const v of VALID_EXECUTION_OUTCOME_TYPES) {
+    assert.equal(/^verified_/.test(v), false,
+      `K37: EXECUTION_OUTCOME_TYPES value "${v}" must NOT use the verified_* prefix `
+      + '(verified_* is constitutionally isolated to VERIFICATION_RESULTS)');
   }
 });

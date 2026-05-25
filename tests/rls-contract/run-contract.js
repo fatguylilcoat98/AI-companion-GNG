@@ -1213,3 +1213,162 @@ test('governance_execution_outcomes INSERT: outcome_type outside reported_* voca
     );
   }
 });
+
+// ---------------------------------------------------------------------
+// governance_execution_verifications (GM-29): admin-only SELECT;
+// no proposer / reviewer / authorizer / claimant / attempter /
+// recorder / verifier-as-non-admin / family / caregiver
+// visibility. INSERT requires admin role + tenant + no
+// impersonation. UNIQUE(execution_outcome_id) enforces one
+// verification per outcome; verifications are OPTIONAL.
+// Constitutional rule: VERIFICATION ≠ RECONCILIATION ≠ REPAIR.
+// ---------------------------------------------------------------------
+
+const ADMIN6_A = 'aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa';
+const ADMIN6_B = 'bbbbbbbb-9999-2222-2222-bbbbbbbbbbbb';
+const VERIFICATION_A = 'aaaaaaaa-8888-1111-1111-100000000001';
+const VERIFICATION_B = 'bbbbbbbb-8888-2222-2222-200000000001';
+const OUTCOME_A_FOR_VERIFY = 'aaaaaaaa-9999-1111-1111-e00000000001';
+const OUTCOME_B_FOR_VERIFY = 'bbbbbbbb-9999-2222-2222-f00000000001';
+
+test('governance_execution_verifications: admin in pilot sees the recorded verification', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_verifications', 'id');
+    assert.ok(ids.includes(VERIFICATION_A), 'admin must see verifications in pilot');
+    assert.equal(ids.includes(VERIFICATION_B), false, 'admin must NOT see pilot-B verifications');
+  });
+});
+
+test('governance_execution_verifications: senior-A (proposer) sees nothing', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    assert.deepEqual(await visibleIds(client, 'governance_execution_verifications', 'id'), []);
+  });
+});
+
+test('governance_execution_verifications: family / caregiver see nothing', async () => {
+  const c = await setup();
+  for (const [user, role] of [[FAMILY_A, 'family'], [CAREGIVER_A, 'caregiver']]) {
+    await withContext(c, { role: 'lylo_app', pilot: PILOT_A, user, userRole: role }, async (client) => {
+      assert.deepEqual(await visibleIds(client, 'governance_execution_verifications', 'id'), []);
+    });
+  }
+});
+
+test('governance_execution_verifications: cross-pilot — pilot-B admin sees only pilot-B verification', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_B, user: 'bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_verifications', 'id');
+    assert.deepEqual(ids.sort(), [VERIFICATION_B]);
+  });
+});
+
+test('governance_execution_verifications: lylo_runtime has no grant — SELECT permission denied', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_verifications'),
+      /permission denied/i
+    );
+  });
+});
+
+test('governance_execution_verifications INSERT: non-admin role rejected by WITH CHECK', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_verifications '
+          + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+          + "VALUES ($1, $2, $3, 'admin', 'human_observation', 'verified_consistent')",
+        [PILOT_A, OUTCOME_A_FOR_VERIFY, SENIOR_A]
+      ),
+      /row.level security|new row violates row.level/i
+    );
+  });
+});
+
+test('governance_execution_verifications INSERT: admin cannot impersonate another verified_by_user_id', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN6_A, userRole: 'admin',
+  }, async (client) => {
+    // Impersonate ADMIN5_A as verifier while connected as ADMIN6_A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_verifications '
+          + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+          + "VALUES ($1, $2, $3, 'admin', 'human_observation', 'verified_consistent')",
+        [PILOT_A, OUTCOME_A_FOR_VERIFY, ADMIN5_A]
+      ),
+      /row.level security|new row violates row.level|duplicate key|unique/i
+    );
+  });
+});
+
+test('governance_execution_verifications INSERT: cross-pilot rejected (composite FK + RLS)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN6_A, userRole: 'admin',
+  }, async (client) => {
+    // Try to record a verification against pilot-B's outcome from pilot A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_verifications '
+          + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+          + "VALUES ($1, $2, $3, 'admin', 'human_observation', 'verified_consistent')",
+        [PILOT_B, OUTCOME_B_FOR_VERIFY, ADMIN6_A]
+      ),
+      /row.level security|new row violates row.level|foreign key/i
+    );
+  });
+});
+
+test('governance_execution_verifications INSERT: replay (duplicate verification for same outcome) rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN6_A, userRole: 'admin',
+  }, async (client) => {
+    // OUTCOME_A_FOR_VERIFY already has VERIFICATION_A seeded; second verification fails UNIQUE.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_verifications '
+          + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+          + "VALUES ($1, $2, $3, 'admin', 'system_log_review', 'verification_inconclusive')",
+        [PILOT_A, OUTCOME_A_FOR_VERIFY, ADMIN6_A]
+      ),
+      /duplicate key|unique/i
+    );
+  });
+});
+
+test('governance_execution_verifications INSERT: verification_result outside locked vocabulary rejected (CHECK)', async () => {
+  const c = await setup();
+  // Use superuser to bypass RLS so we hit the CHECK constraint
+  // directly (not the WITH CHECK policy). The `verified_*` prefix
+  // is constitutionally isolated to this table — verified_succeeded
+  // / verified_failed / verified_completed all fail.
+  for (const bad of ['verified_succeeded', 'verified_failed', 'verified_completed', 'reported_completed', 'consistent']) {
+    await assert.rejects(
+      () => c.query(
+        'INSERT INTO governance_execution_verifications '
+          + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, verified_by_role, verification_type, verification_result) '
+          + "VALUES ($1, $2, $3, 'admin', 'human_observation', $4)",
+        [PILOT_A, OUTCOME_A_FOR_VERIFY, ADMIN6_A, bad]
+      ),
+      /check constraint|verification_result/i,
+      `forbidden verification_result "${bad}" must be rejected by CHECK constraint`
+    );
+  }
+});

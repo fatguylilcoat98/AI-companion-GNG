@@ -359,3 +359,35 @@ CREATE TABLE governance_execution_outcomes (
   FOREIGN KEY (pilot_instance_id, execution_attempt_id)
     REFERENCES governance_execution_attempts (pilot_instance_id, id)
 );
+
+-- GM-29: the execution-verification substrate. Structural mirror
+-- of db/migrations/014_execution_verifications.sql, MINUS the
+-- append-only and preconditions BEFORE-INSERT triggers.
+CREATE TABLE governance_execution_verifications (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pilot_instance_id        UUID NOT NULL REFERENCES pilot_instances(id),
+  execution_outcome_id     UUID NOT NULL,
+  verified_by_user_id      UUID NOT NULL,
+  verified_by_role         TEXT NOT NULL
+    CHECK (verified_by_role = 'admin'),
+  verification_type        TEXT NOT NULL
+    CHECK (verification_type IN (
+      'human_observation',
+      'system_log_review',
+      'database_state_check',
+      'external_confirmation'
+    )),
+  verification_result      TEXT NOT NULL
+    CHECK (verification_result IN (
+      'verified_consistent',
+      'verified_inconsistent',
+      'verification_inconclusive'
+    )),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (execution_outcome_id),
+  UNIQUE (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, verified_by_user_id)
+    REFERENCES users (pilot_instance_id, id),
+  FOREIGN KEY (pilot_instance_id, execution_outcome_id)
+    REFERENCES governance_execution_outcomes (pilot_instance_id, id)
+);

@@ -125,6 +125,22 @@ const INTENT_TYPES = Object.freeze({
   // reconciliation, time windows, and truth claims remain
   // explicitly deferred to future GMs.
   GOVERNANCE_EXECUTION_OUTCOME_RECORD: 'governance.execution.outcome.record',
+
+  // GM-29: recording that a verifier (different from the outcome
+  // recorder) independently checked a reported outcome. The first
+  // artifact in the chain that names "checking" as a distinct
+  // governance act — and deliberately stops short of saying the
+  // check was correct, repaired anything, or had any operational
+  // consequence. Classifier returns `admissible`; role + data
+  // preconditions live at the actor + DB trigger. Constitutional
+  // rule: VERIFICATION ≠ RECONCILIATION ≠ REPAIR.
+  // `verified_consistent` ≠ truth. `verification_inconclusive` ≠
+  // "retry" / "escalate" / "someone must act." Verifications are
+  // OPTIONAL (missing row means "no verification recorded"). The
+  // `verified_*` vocabulary is constitutionally isolated to the
+  // verification artifact only — it must NEVER appear in
+  // EXECUTION_OUTCOME_TYPES or any other substrate.
+  GOVERNANCE_EXECUTION_VERIFY: 'governance.execution.verify',
 });
 
 const ALL_INTENT_TYPES = new Set(Object.values(INTENT_TYPES));

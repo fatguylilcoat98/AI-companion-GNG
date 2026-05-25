@@ -764,6 +764,128 @@ async function inspectExecutionOutcome(client, sessionCtx, outcomeId) {
   return result.rows.length === 0 ? null : result.rows[0];
 }
 
+// -------------------------------------------------------------------
+// GM-29: governance_execution_verifications operations.
+//
+// VALID_VERIFICATION_TYPES — locked 4-value evidence-channel vocab.
+// VALID_VERIFICATION_RESULTS — locked 3-value result vocab; the
+// `verified_*` prefix is constitutionally isolated to this table.
+// Adding any value, or letting `verified_*` leak into
+// EXECUTION_OUTCOME_TYPES, fails the K37 snapshot test in
+// tests/governance/adversarial.test.js. CHECK constraints in
+// db/migrations/014_execution_verifications.sql are authoritative.
+
+const VALID_VERIFICATION_TYPES = new Set([
+  'human_observation',
+  'system_log_review',
+  'database_state_check',
+  'external_confirmation',
+]);
+
+const VALID_VERIFICATION_RESULTS = new Set([
+  'verified_consistent',
+  'verified_inconsistent',
+  'verification_inconclusive',
+]);
+
+const VALID_VERIFIER_ROLES = new Set(['admin']);
+
+// recordExecutionVerification — single INSERT into
+// governance_execution_verifications. The actor
+// (src/actors/execution-verification-ledger-actor.js) is
+// responsible for the ten-layer Decision verification + admin
+// role check; this function performs vocabulary validation and
+// the INSERT. verified_by_user_id + pilot_instance_id ALWAYS
+// come from session context — RLS WITH CHECK enforces no-
+// impersonation; the BEFORE-INSERT trigger enforces the three
+// data preconditions (outcome exists, self-verification
+// forbidden, upstream chain resolves to approved).
+async function recordExecutionVerification(client, sessionCtx, input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('recordExecutionVerification: input is required');
+  }
+  const { executionOutcomeId, verificationType, verificationResult } = input;
+
+  if (typeof executionOutcomeId !== 'string' || !UUID_RE.test(executionOutcomeId)) {
+    throw new Error('recordExecutionVerification: executionOutcomeId must be a UUID');
+  }
+  if (!VALID_VERIFICATION_TYPES.has(verificationType)) {
+    throw new Error(
+      `recordExecutionVerification: verificationType must be one of ${Array.from(VALID_VERIFICATION_TYPES).join(', ')}`
+    );
+  }
+  if (!VALID_VERIFICATION_RESULTS.has(verificationResult)) {
+    throw new Error(
+      `recordExecutionVerification: verificationResult must be one of ${Array.from(VALID_VERIFICATION_RESULTS).join(', ')}`
+    );
+  }
+  if (!VALID_VERIFIER_ROLES.has(sessionCtx.userRole)) {
+    throw new Error(
+      `recordExecutionVerification: sessionCtx.userRole must be one of ${Array.from(VALID_VERIFIER_ROLES).join(', ')}`
+    );
+  }
+
+  const inserted = await client.query(
+    'INSERT INTO governance_execution_verifications '
+      + '(pilot_instance_id, execution_outcome_id, verified_by_user_id, '
+      + 'verified_by_role, verification_type, verification_result) '
+      + 'VALUES ($1, $2, $3, $4, $5, $6) '
+      + 'RETURNING id, created_at',
+    [
+      sessionCtx.pilotInstanceId,
+      executionOutcomeId,
+      sessionCtx.userId,
+      sessionCtx.userRole,
+      verificationType,
+      verificationResult,
+    ]
+  );
+
+  return {
+    id: inserted.rows[0].id,
+    created_at: inserted.rows[0].created_at,
+  };
+}
+
+// listExecutionVerifications — admin-only listing. RLS narrows
+// by pilot + admin role. Bounded by DEFAULT_LIST_LIMIT /
+// MAX_LIST_LIMIT.
+async function listExecutionVerifications(client, sessionCtx, options) {
+  const opts = options || {};
+  const requestedLimit = opts.limit;
+  let limit = DEFAULT_LIST_LIMIT;
+  if (requestedLimit !== undefined) {
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 1) {
+      throw new Error('listExecutionVerifications: limit must be a positive integer');
+    }
+    limit = Math.min(requestedLimit, MAX_LIST_LIMIT);
+  }
+  const result = await client.query(
+    'SELECT id, execution_outcome_id, verified_by_user_id, verified_by_role, '
+      + 'verification_type, verification_result, created_at '
+      + 'FROM governance_execution_verifications '
+      + 'ORDER BY created_at DESC '
+      + 'LIMIT $1',
+    [limit]
+  );
+  return result.rows;
+}
+
+// inspectExecutionVerification — admin-only single-row lookup.
+async function inspectExecutionVerification(client, sessionCtx, verificationId) {
+  if (typeof verificationId !== 'string' || !UUID_RE.test(verificationId)) {
+    throw new Error('inspectExecutionVerification: verificationId must be a UUID');
+  }
+  const result = await client.query(
+    'SELECT id, execution_outcome_id, verified_by_user_id, verified_by_role, '
+      + 'verification_type, verification_result, created_at '
+      + 'FROM governance_execution_verifications '
+      + 'WHERE id = $1',
+    [verificationId]
+  );
+  return result.rows.length === 0 ? null : result.rows[0];
+}
+
 module.exports = {
   stageReviewItem,
   listPendingReviewItems,
@@ -781,6 +903,9 @@ module.exports = {
   recordExecutionOutcome,
   listExecutionOutcomes,
   inspectExecutionOutcome,
+  recordExecutionVerification,
+  listExecutionVerifications,
+  inspectExecutionVerification,
   VALID_DECISION_INTENT_TYPES,
   VALID_DECISION_REASONS,
   VALID_PROPOSER_ROLES,
@@ -794,4 +919,7 @@ module.exports = {
   EXECUTION_SURFACE_FOR_SCOPE,
   VALID_EXECUTION_OUTCOME_TYPES,
   VALID_RECORDER_ROLES,
+  VALID_VERIFICATION_TYPES,
+  VALID_VERIFICATION_RESULTS,
+  VALID_VERIFIER_ROLES,
 };

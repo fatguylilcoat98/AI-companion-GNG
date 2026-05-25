@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Actors public API — GM-22 through GM-28.
+ * Actors public API — GM-22 through GM-29.
  *
  * Decision-gated executors. Every actor's contract:
  *   1. Accept a Decision (instanceof + WeakSet-blessed + frozen +
@@ -13,7 +13,7 @@
  *   4. On inadmissible → return rejected outcome (no execution).
  *   5. On forged/tampered/mismatched Decision → throw.
  *
- * Seven actors today:
+ * Eight actors today:
  *   - createResponseDeliveryActor (GM-22) — wraps the conversation
  *     runtime; admits ONLY decision.intentType === response.deliver.
  *   - createReviewQueueActor (GM-23) — stages requires_review
@@ -51,11 +51,24 @@
  *     AN OUTCOME ROW IS NOT TRUTH. `reported_completed` ≠
  *     `verified_completed`. Outcomes are OPTIONAL — missing rows
  *     are structurally valid.
+ *   - createExecutionVerificationLedgerActor (GM-29) — records a
+ *     verifier's independent check of a reported outcome, into
+ *     governance_execution_verifications. Admin only; verifier ≠
+ *     recorder (6th separation-of-duties stage);
+ *     UNIQUE(outcome_id); verification_type ∈ 4-value channel
+ *     vocabulary; verification_result ∈ 3-value vocabulary
+ *     (`verified_consistent`, `verified_inconsistent`,
+ *     `verification_inconclusive`). Constitutional rule:
+ *     VERIFICATION ≠ RECONCILIATION ≠ REPAIR. A verification row
+ *     is epistemic, not authoritative. Verifications are
+ *     OPTIONAL. The `verified_*` prefix is constitutionally
+ *     isolated to the verification artifact only.
  *
  * Each actor has its own intent-type contract and its own outcome
  * routing. They share the OUTCOMES vocabulary (executed / abstained
  * / rejected / staged / recorded / authorized_recorded /
- * claim_recorded / attempt_recorded / outcome_recorded).
+ * claim_recorded / attempt_recorded / outcome_recorded /
+ * verification_recorded).
  */
 
 const { createResponseDeliveryActor } = require('./response-delivery-actor');
@@ -65,6 +78,7 @@ const { createExecutionAuthorizationActor } = require('./execution-authorization
 const { createExecutionClaimLedgerActor } = require('./execution-claim-ledger-actor');
 const { createExecutionAttemptLedgerActor } = require('./execution-attempt-ledger-actor');
 const { createExecutionOutcomeLedgerActor } = require('./execution-outcome-ledger-actor');
+const { createExecutionVerificationLedgerActor } = require('./execution-verification-ledger-actor');
 const { OUTCOMES } = require('./outcomes');
 
 module.exports = {
@@ -75,5 +89,6 @@ module.exports = {
   createExecutionClaimLedgerActor,
   createExecutionAttemptLedgerActor,
   createExecutionOutcomeLedgerActor,
+  createExecutionVerificationLedgerActor,
   OUTCOMES,
 };
