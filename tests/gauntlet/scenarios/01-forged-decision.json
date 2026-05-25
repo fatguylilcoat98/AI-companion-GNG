@@ -1,0 +1,30 @@
+{
+  "id": "L.forged-decision.plain-object-vs-verification-actor",
+  "version": "1.0.0",
+  "category": "forged-decision",
+  "description": "A plain object that quacks like a Decision is rejected at actor layer 1 (instanceof). Mirrors K1.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [
+    { "op": "fixtures.reset" }
+  ],
+  "step": {
+    "kind": "forged-decision",
+    "actor": "createExecutionVerificationLedgerActor",
+    "forgery": "plain-object",
+    "intent": "governance.execution.verify",
+    "params": {
+      "executionOutcomeId": "aaaaaaaa-9999-1111-1111-e00000000001",
+      "verificationType": "human_observation",
+      "verificationResult": "verified_consistent"
+    }
+  },
+  "expect": {
+    "result": "expected_throw",
+    "layerHit": "actor-layer-1",
+    "errorClassMatches": "^Error$"
+  }
+}

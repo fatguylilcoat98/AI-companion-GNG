@@ -56,3 +56,4 @@ Thumbs.db
 # ----------------------------------------------------------------------------
 coverage/
 .nyc_output/
+tests/gauntlet/manual/

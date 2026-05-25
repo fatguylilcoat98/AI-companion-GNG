@@ -229,7 +229,7 @@ connection strings** (GM-16). The connecting LOGIN role's effective
 identity determines what RLS lets the process see and write — see
 `../governance/rls-privacy-contract.md`.
 
-#### Memory + companion + conversation + governance + actors + review are all library-only today (GM-17 through GM-29)
+#### Memory + companion + conversation + governance + actors + review + gauntlet are all library-only today (GM-17 through GM-30)
 
 The memory-governance module (`src/memory/`, GM-17, hardened in
 GM-18), the read-only companion consumer (`src/companion/`,
@@ -240,9 +240,11 @@ GM-19), the first mounted conversation runtime
 GM-23 review-queue substrate, the GM-24 review-decision
 substrate, the GM-25 execution-authorization substrate, the
 GM-26 execution-claim substrate, the GM-27 execution-attempt
-substrate, the GM-28 execution-outcome substrate, and the
-GM-29 execution-verification substrate (extended `src/review/`
-+ seven Decision-gated actors in `src/actors/`) are all
+substrate, the GM-28 execution-outcome substrate, the GM-29
+execution-verification substrate (extended `src/review/` + seven
+Decision-gated actors in `src/actors/`), and the GM-30
+adversarial gauntlet harness (`src/gauntlet/` — test-only,
+mechanically forbidden from production import) are all
 **libraries**. No process in this release consumes them — the
 runtime boot path (`src/runtime/boot.js`) does not import any
 of them, the provisioning script does not import any of them,

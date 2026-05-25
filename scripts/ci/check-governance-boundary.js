@@ -81,6 +81,9 @@ const FORBIDDEN_PATH_PREFIXES = [
   '../db',
   '../setup',
   '../../scripts/setup',
+  '../actors',
+  '../review',
+  '../gauntlet',
 ];
 
 // Identifier-level scans (post-comment-stripping).

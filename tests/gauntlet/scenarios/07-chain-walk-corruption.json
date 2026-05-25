@@ -1,0 +1,29 @@
+{
+  "id": "L.chain-walk-corruption.nonexistent-outcome-reference",
+  "version": "1.0.0",
+  "category": "chain-walk-corruption",
+  "description": "Reference a UUID-shaped value that points at no outcome. The BEFORE-INSERT trigger walks the chain, finds nothing, and refuses. ReviewRepositoryError.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [
+    { "op": "fixtures.reset" }
+  ],
+  "step": {
+    "kind": "actor-call",
+    "actor": "createExecutionVerificationLedgerActor",
+    "intent": "governance.execution.verify",
+    "params": {
+      "executionOutcomeId": "00000000-0000-0000-0000-000000000999",
+      "verificationType": "human_observation",
+      "verificationResult": "verified_consistent"
+    }
+  },
+  "expect": {
+    "result": "expected_rejection",
+    "layerHit": "rls",
+    "errorClassMatches": "^ReviewRepositoryError$"
+  }
+}

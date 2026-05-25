@@ -1,0 +1,21 @@
+{
+  "id": "L.forbidden-vocabulary-drift.k24-canary-mirror",
+  "version": "1.0.0",
+  "category": "forbidden-vocabulary-drift",
+  "description": "Placeholder probe for the K24 / J24 / I24 / H28 file-scoped forbidden-vocabulary scan class. Assertion lives in tests/governance/adversarial.test.js per-substrate.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-4444-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [],
+  "step": {
+    "kind": "boundary-guard",
+    "scan": "K24-mirror"
+  },
+  "expect": {
+    "result": "expected_no_op",
+    "layerHit": "boundary-guard",
+    "errorClassMatches": null
+  }
+}

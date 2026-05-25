@@ -1,0 +1,30 @@
+{
+  "id": "L.wrong-intent.outcome-decision-vs-verification-actor",
+  "version": "1.0.0",
+  "category": "wrong-intent",
+  "description": "A real governance.execution.outcome.record Decision is rejected by the verification actor at layer 4. Mirrors K3.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-9999-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [
+    { "op": "fixtures.reset" }
+  ],
+  "step": {
+    "kind": "forged-decision",
+    "actor": "createExecutionVerificationLedgerActor",
+    "forgery": "wrong-intent",
+    "otherIntent": "governance.execution.outcome.record",
+    "params": {
+      "executionOutcomeId": "aaaaaaaa-9999-1111-1111-e00000000001",
+      "verificationType": "human_observation",
+      "verificationResult": "verified_consistent"
+    }
+  },
+  "expect": {
+    "result": "expected_throw",
+    "layerHit": "actor-layer-1",
+    "errorClassMatches": "^Error$"
+  }
+}

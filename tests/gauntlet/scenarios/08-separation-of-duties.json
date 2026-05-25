@@ -1,0 +1,29 @@
+{
+  "id": "L.separation-of-duties-violation.recorder-as-verifier",
+  "version": "1.0.0",
+  "category": "separation-of-duties-violation",
+  "description": "admin5 (the recorder of OUTCOME_A) tries to also verify it. BEFORE-INSERT trigger raises self-verification forbidden. ReviewRepositoryError.",
+  "session": {
+    "pilotInstanceId": "11111111-1111-1111-1111-111111111111",
+    "userId": "aaaaaaaa-8888-1111-1111-aaaaaaaaaaaa",
+    "userRole": "admin"
+  },
+  "setup": [
+    { "op": "fixtures.reset" }
+  ],
+  "step": {
+    "kind": "actor-call",
+    "actor": "createExecutionVerificationLedgerActor",
+    "intent": "governance.execution.verify",
+    "params": {
+      "executionOutcomeId": "aaaaaaaa-9999-1111-1111-e00000000001",
+      "verificationType": "human_observation",
+      "verificationResult": "verified_consistent"
+    }
+  },
+  "expect": {
+    "result": "expected_rejection",
+    "layerHit": "rls",
+    "errorClassMatches": "^ReviewRepositoryError$"
+  }
+}

@@ -91,6 +91,7 @@ const FORBIDDEN_PATH_PREFIXES = [
   '../../scripts/setup',
   '../memory',
   '../companion',
+  '../gauntlet',
 ];
 
 // Public-entry-only rule for the layers actors ARE allowed to

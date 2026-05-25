@@ -94,7 +94,7 @@ function isForbiddenAnthropicImport(specifier) {
 // Cross-layer import rules. The conversation module reads memory ONLY
 // through the companion module's public entry. Memory-module imports
 // of any form are rejected.
-const FORBIDDEN_PATH_PREFIXES = ['../memory', '../runtime', '../db', '../setup', '../../scripts/setup'];
+const FORBIDDEN_PATH_PREFIXES = ['../memory', '../runtime', '../db', '../setup', '../../scripts/setup', '../gauntlet'];
 const COMPANION_DEEP_RE = /^\.\.\/companion\/.+/;
 const COMPANION_ENTRY_PATHS = new Set(['../companion', '../companion/index']);
 
