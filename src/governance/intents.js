@@ -111,6 +111,20 @@ const INTENT_TYPES = Object.freeze({
   // failure, completion, interruption, delivery, dispatch,
   // finalization, or commit state.
   GOVERNANCE_EXECUTION_ATTEMPT: 'governance.execution.attempt',
+
+  // GM-28: recording an admin's observation of an attempt's
+  // apparent state. The first artifact in the chain that records
+  // a judgment about what happened — bound by the strictest
+  // discipline in the substrate. Classifier returns `admissible`;
+  // role + data preconditions live at the actor + DB trigger.
+  // Constitutional rule: AN OUTCOME ROW IS NOT TRUTH.
+  // `reported_completed` ≠ `verified_completed`.
+  // `reported_unknown` is active epistemic uncertainty, NOT a
+  // default filler state. Outcomes are OPTIONAL (missing row
+  // means "no outcome reported"). Verification, retries,
+  // reconciliation, time windows, and truth claims remain
+  // explicitly deferred to future GMs.
+  GOVERNANCE_EXECUTION_OUTCOME_RECORD: 'governance.execution.outcome.record',
 });
 
 const ALL_INTENT_TYPES = new Set(Object.values(INTENT_TYPES));

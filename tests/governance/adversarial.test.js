@@ -266,12 +266,13 @@ test('C1. EVENT_TYPES snapshot: the GM-18-locked memory-audit vocabulary is unch
   // they don't go through governance_audit_log.
 });
 
-test('C2. REASONS snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 additions.', () => {
+test('C2. REASONS snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 additions.', () => {
   const SNAPSHOT = [
     'ai_inferred_requires_review',
     'execution_attempt_recording_permitted',
     'execution_authorization_recording_permitted',
     'execution_claim_recording_permitted',
+    'execution_outcome_recording_permitted',
     'external_side_effects_not_authorized',
     'malformed_intent_payload',
     'response_delivery_permitted',
@@ -289,12 +290,13 @@ test('C2. REASONS snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 additions.', (
     'governance REASONS snapshot drifted — adding reasons requires paired updates to docs/governance/');
 });
 
-test('C3. INTENT_TYPES snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 additions.', () => {
+test('C3. INTENT_TYPES snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 + GM-28 additions.', () => {
   const SNAPSHOT = [
     'external.side_effect',
     'governance.execution.attempt',
     'governance.execution.authorize',
     'governance.execution.claim',
+    'governance.execution.outcome.record',
     'governance.review.decide',
     'memory.candidate.create',
     'memory.retract',
@@ -309,13 +311,14 @@ test('C3. INTENT_TYPES snapshot: GM-21 + GM-24 + GM-25 + GM-26 + GM-27 additions
     'INTENT_TYPES snapshot drifted — adding intent types requires paired updates to docs/governance/');
 });
 
-test('C4. OUTCOMES snapshot: GM-22 through GM-26 + the GM-27 addition (attempt_recorded).', () => {
-  // GM-27 added exactly one actor outcome. The eight-way set is
+test('C4. OUTCOMES snapshot: GM-22 through GM-27 + the GM-28 addition (outcome_recorded).', () => {
+  // GM-28 added exactly one actor outcome. The nine-way set is
   // locked here; any future widening must update this snapshot
   // alongside docs/governance/actor-runtime-boundary.md.
   const SNAPSHOT = [
     'abstained', 'attempt_recorded', 'authorized_recorded',
-    'claim_recorded', 'executed', 'recorded', 'rejected', 'staged',
+    'claim_recorded', 'executed', 'outcome_recorded',
+    'recorded', 'rejected', 'staged',
   ];
   const current = Object.values(OUTCOMES).sort();
   assert.deepEqual(current, SNAPSHOT.sort(),
@@ -1576,4 +1579,229 @@ test('I27. Doc-presence canary: execution-attempt-runtime-boundary.md must conta
   assert.match(doc, /^## What remains unresolved$/m,
     'I27: doc must contain a "## What remains unresolved" section (flags the phantom-attempt problem '
     + 'for the future-outcome GM)');
+});
+
+// ===================================================================
+// J. GM-28 execution-outcome ledger actor adversarial probes
+// ===================================================================
+
+const { createExecutionOutcomeLedgerActor } = require('../../src/actors');
+
+const EXECUTION_ATTEMPT_ID = 'aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa';
+
+function makeMockOutcomePool() {
+  const queries = [];
+  let connectCalls = 0;
+  const client = {
+    queries,
+    async query(text) {
+      queries.push(text);
+      if (/RETURNING/i.test(text)) {
+        return { rows: [{ id: 'eeeeeeee-9999-9999-9999-eeeeeeeeeeee', created_at: new Date() }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => {},
+  };
+  return {
+    getQueries: () => queries,
+    getConnectCalls: () => connectCalls,
+    connect: async () => { connectCalls += 1; return client; },
+  };
+}
+
+function baseOutcomeParams() {
+  return {
+    pilotInstanceId: PILOT,
+    userId: ADMIN,
+    userRole: 'admin',
+    executionAttemptId: EXECUTION_ATTEMPT_ID,
+    authorizationScope: 'memory_candidate_admission',
+    executionSurface: 'future_memory_admission_consumer',
+    outcomeType: 'reported_completed',
+  };
+}
+
+test('J1. Plain-object Decision to outcome-ledger actor → throws (instanceof fails); pool not consulted.', async () => {
+  const pool = makeMockOutcomePool();
+  const actor = createExecutionOutcomeLedgerActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_OUTCOME_RECORD,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_OUTCOME_RECORDING_PERMITTED,
+    policyRef: 'execution-outcome-runtime-boundary.md §3',
+  };
+  await assert.rejects(() => actor.execute(fake, baseOutcomeParams()), /must be a Decision instance/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('J2. Prototype-tampered Decision passes instanceof but isValidDecision rejects → throws.', async () => {
+  const pool = makeMockOutcomePool();
+  const actor = createExecutionOutcomeLedgerActor({ reviewQueuePool: pool });
+  const fake = {
+    intentType: INTENT_TYPES.GOVERNANCE_EXECUTION_OUTCOME_RECORD,
+    decision: DECISION_OUTCOMES.ADMISSIBLE,
+    reason: REASONS.EXECUTION_OUTCOME_RECORDING_PERMITTED,
+    policyRef: 'execution-outcome-runtime-boundary.md §3',
+  };
+  Object.setPrototypeOf(fake, Decision.prototype);
+  Object.freeze(fake);
+  assert.ok(fake instanceof Decision);
+  await assert.rejects(() => actor.execute(fake, baseOutcomeParams()), /prototype tampering or forgery/);
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('J3. Real Decision with wrong intent type (governance.execution.attempt) → throws (layer-4).', async () => {
+  const pool = makeMockOutcomePool();
+  const actor = createExecutionOutcomeLedgerActor({ reviewQueuePool: pool });
+  const wrong = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_ATTEMPT });
+  await assert.rejects(
+    () => actor.execute(wrong, baseOutcomeParams()),
+    /decision\.intentType must be "governance\.execution\.outcome\.record"/
+  );
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('J5. Non-admin userRole rejected BEFORE pool.connect.', async () => {
+  const pool = makeMockOutcomePool();
+  const actor = createExecutionOutcomeLedgerActor({ reviewQueuePool: pool });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_OUTCOME_RECORD });
+  for (const role of ['senior', 'family', 'caregiver', 'system']) {
+    await assert.rejects(
+      () => actor.execute(decision, { ...baseOutcomeParams(), userRole: role }),
+      /userRole must be "admin"/
+    );
+  }
+  assert.equal(pool.getConnectCalls(), 0);
+});
+
+test('J14. Sentinel content in unknown params field never appears in captured logs.', async () => {
+  const SENTINEL = 'J14_SECRET_AAA';
+  const pool = makeMockOutcomePool();
+  const captured = [];
+  const log = {
+    info(event, fields) {
+      captured.push(JSON.stringify({ ts: 'X', level: 'info', event, pid: 0, ...(fields || {}) }));
+    },
+  };
+  const actor = createExecutionOutcomeLedgerActor({ reviewQueuePool: pool, log });
+  const decision = classifyExecutionIntent({ type: INTENT_TYPES.GOVERNANCE_EXECUTION_OUTCOME_RECORD });
+  await actor.execute(
+    decision,
+    Object.assign(baseOutcomeParams(), { recorderNotes: SENTINEL, payload: SENTINEL })
+  );
+  const text = captured.join('\n');
+  assert.equal(text.includes(SENTINEL), false, 'unknown-field sentinel must not appear in logs');
+  assert.ok(text.includes('actor.execution_outcome.recorded'));
+});
+
+test('J15. EVENT_TYPES snapshot still locked — GM-28 added NO new audit event types.', () => {
+  const SNAPSHOT = ['memory.created', 'memory.list'];
+  const current = Object.values(memoryAudit.EVENT_TYPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'GM-28 must not widen memory EVENT_TYPES — the outcomes table IS the artifact');
+});
+
+test('J22. Static scan: zero references to governance_execution_outcomes outside the writing path.', () => {
+  // The J-series canary against accidental consumer introduction.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const WRITING_PATH = new Set([
+    'src/review/repository.js',
+    'src/review/transaction.js',
+    'src/review/index.js',
+    'src/actors/execution-outcome-ledger-actor.js',
+    'src/actors/outcomes.js',
+    'src/actors/index.js',
+    'scripts/ci/check-review-boundary.js',
+  ]);
+  function walk(rel, out) {
+    const abs = path.join(REPO, rel);
+    if (!fs.existsSync(abs)) return;
+    const st = fs.statSync(abs);
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(abs)) walk(`${rel}/${name}`, out);
+    } else if (rel.endsWith('.js')) {
+      out.push(rel);
+    }
+  }
+  const files = [];
+  for (const root of ['src', 'scripts/ci']) walk(root, files);
+  const leaks = [];
+  for (const rel of files) {
+    const content = fs.readFileSync(path.join(REPO, rel), 'utf8');
+    if (content.includes('governance_execution_outcomes') && !WRITING_PATH.has(rel)) {
+      leaks.push(rel);
+    }
+  }
+  assert.deepEqual(leaks, [],
+    'GM-28 canary: governance_execution_outcomes referenced outside the writing path — '
+    + 'a future consumer may be leaking through. Files with leaks: ' + leaks.join(', '));
+});
+
+test('J24. File-scoped forbidden-vocabulary scan: execution-outcome-ledger actor must not contain operational OR truth-claim words.', () => {
+  // Per OQ-28.14: the STRICTEST scan in the entire substrate.
+  // GM-27's 8 outcome-implying words + 10 NEW truth-claim words
+  // = 18 forbidden bare identifiers.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const filePath = path.join(REPO, 'src/actors/execution-outcome-ledger-actor.js');
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const FORBIDDEN = [
+    // GM-27 inheritance: outcome-implying vocabulary.
+    'completed', 'succeeded', 'failed', 'delivered',
+    'finalized', 'executed', 'dispatched', 'committed',
+    // GM-28 NEW: truth-claim vocabulary.
+    'verified', 'confirmed', 'actual', 'actually',
+    'definitely', 'proven', 'certain', 'real', 'reality', 'truth',
+  ];
+  const hits = FORBIDDEN.filter((w) => new RegExp('\\b' + w + '\\b').test(code));
+  assert.deepEqual(hits, [],
+    `J24: execution-outcome-ledger actor contains forbidden vocabulary: ${hits.join(', ')}. `
+    + 'AN OUTCOME ROW IS NOT TRUTH. `reported_completed` ≠ `verified_completed`.');
+});
+
+test('J27. Doc-presence canary: execution-outcome-runtime-boundary.md must contain both required sections.', () => {
+  // Mirrors I27. Defends the future-verification GM against
+  // silent removal of the unresolved-questions warning.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const REPO = path.join(__dirname, '..', '..');
+  const docPath = path.join(REPO, 'docs/governance/execution-outcome-runtime-boundary.md');
+  assert.ok(fs.existsSync(docPath),
+    'J27: docs/governance/execution-outcome-runtime-boundary.md must exist');
+  const doc = fs.readFileSync(docPath, 'utf8');
+  assert.match(doc, /^## What this is NOT$/m,
+    'J27: doc must contain a "## What this is NOT" section');
+  assert.match(doc, /^## What remains unresolved$/m,
+    'J27: doc must contain a "## What remains unresolved" section');
+});
+
+test('J37. EXECUTION_OUTCOME_TYPES snapshot: exactly 4 values, all reported_* prefixed.', () => {
+  // The constitutional canary of GM-28. The reported_* prefix is
+  // not a stylistic convention; it is the structural defense
+  // against truth claims. Adding `reported_succeeded` or
+  // `verified_completed` or any non-prefixed value fails this
+  // test immediately.
+  const {
+    VALID_EXECUTION_OUTCOME_TYPES,
+  } = require('../../src/review/repository');
+  const SNAPSHOT = [
+    'reported_abandoned',
+    'reported_completed',
+    'reported_interrupted',
+    'reported_unknown',
+  ];
+  const current = Array.from(VALID_EXECUTION_OUTCOME_TYPES).sort();
+  assert.deepEqual(current, SNAPSHOT.sort(),
+    'EXECUTION_OUTCOME_TYPES snapshot drifted — the 4-value observational set is the constitutional design');
+  assert.equal(current.length, 4, 'EXECUTION_OUTCOME_TYPES must contain exactly 4 values');
+  for (const v of current) {
+    assert.match(v, /^reported_/,
+      `J37: EXECUTION_OUTCOME_TYPES value "${v}" must be reported_* prefixed `
+      + '(AN OUTCOME ROW IS NOT TRUTH — the prefix puts that fact into the data)');
+  }
 });

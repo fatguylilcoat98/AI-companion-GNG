@@ -66,6 +66,26 @@
  *               interruption, delivery, dispatch, finalization,
  *               or commit state. No production code consumes
  *               attempt rows in GM-27.
+ *   OUTCOME_RECORDED — GM-28: an admin (different from the
+ *               attempter) recorded what they OBSERVED about an
+ *               attempt's apparent state. The first artifact in
+ *               the chain that records a judgment about what
+ *               happened — bound by the strictest discipline in
+ *               the substrate. Constitutional rule (the
+ *               strictest in the entire chain): AN OUTCOME ROW
+ *               IS NOT TRUTH. `reported_completed` ≠
+ *               `verified_completed`. `reported_unknown` is
+ *               active epistemic uncertainty, NOT a default
+ *               filler state. Outcomes are OPTIONAL (missing
+ *               rows are structurally valid). The 4 outcome
+ *               vocabulary values are observational, not
+ *               evaluative — `reported_succeeded` /
+ *               `reported_failed` are deliberately ABSENT
+ *               because they would smuggle truth claims under
+ *               the prefix. No production code consumes outcome
+ *               rows in GM-28; verification, retries,
+ *               reconciliation, and time windows remain
+ *               deferred.
  */
 
 const OUTCOMES = Object.freeze({
@@ -77,6 +97,7 @@ const OUTCOMES = Object.freeze({
   AUTHORIZED_RECORDED: 'authorized_recorded',
   CLAIM_RECORDED:      'claim_recorded',
   ATTEMPT_RECORDED:    'attempt_recorded',
+  OUTCOME_RECORDED:    'outcome_recorded',
 });
 
 module.exports = { OUTCOMES };

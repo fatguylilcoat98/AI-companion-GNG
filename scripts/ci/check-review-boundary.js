@@ -58,6 +58,7 @@ const SELECT_ALLOWED_TABLES = new Set([
   'governance_execution_authorizations',
   'governance_execution_claims',
   'governance_execution_attempts',
+  'governance_execution_outcomes',
   'users',
   'pilot_instances',
 ]);
@@ -68,6 +69,7 @@ const INSERT_ALLOWED_TABLES = new Set([
   'governance_execution_authorizations',
   'governance_execution_claims',
   'governance_execution_attempts',
+  'governance_execution_outcomes',
 ]);
 
 // All write/DDL keywords except INSERT (which is permitted but
@@ -258,6 +260,38 @@ const FILE_SCOPED_SCANS = [
       { re: /\bsucceeded\b/, label: 'succeeded (attempt is NOT success)' },
       { re: /\bfailed\b/, label: 'failed (attempt records beginning, not outcome)' },
       { re: /\bcommitted\b/, label: 'committed (DB commit lives in the transaction layer, NOT in this actor)' },
+    ],
+  },
+  // GM-28: execution-outcome ledger actor. "AN OUTCOME ROW IS
+  // NOT TRUTH." Per OQ-28.14. The STRICTEST file-scoped scan in
+  // the entire substrate. Combines GM-27's 8 outcome-implying
+  // words with 10 NEW truth-claim words. The actor file records
+  // a *reported* observation; it must contain no operational
+  // vocabulary AND no truth-claim vocabulary.
+  {
+    file: 'src/actors/execution-outcome-ledger-actor.js',
+    forbidden: [
+      // GM-27 inheritance: outcome-implying vocabulary.
+      { re: /\bexecuted\b/, label: 'executed (outcome row is NOT execution)' },
+      { re: /\bcompleted\b/, label: 'completed (outcome row is NOT completion — it is reported completion)' },
+      { re: /\bdispatched\b/, label: 'dispatched (outcome row is NOT dispatch)' },
+      { re: /\bdelivered\b/, label: 'delivered (outcome row is NOT delivery)' },
+      { re: /\bfinalized\b/, label: 'finalized (outcome row is NOT finalization)' },
+      { re: /\bsucceeded\b/, label: 'succeeded (outcome row is NOT success — would smuggle truth claim)' },
+      { re: /\bfailed\b/, label: 'failed (outcome row is NOT failure — would smuggle truth claim)' },
+      { re: /\bcommitted\b/, label: 'committed (DB commit lives in the transaction layer)' },
+      // GM-28 NEW: truth-claim vocabulary. AN OUTCOME ROW IS
+      // NOT TRUTH.
+      { re: /\bverified\b/, label: 'verified (verification is a SEPARATE future ring)' },
+      { re: /\bconfirmed\b/, label: 'confirmed (outcome row is NOT confirmation)' },
+      { re: /\bactual\b/, label: 'actual (outcome row is NOT the actual state)' },
+      { re: /\bactually\b/, label: 'actually (outcome row is reported, not actual)' },
+      { re: /\bdefinitely\b/, label: 'definitely (outcome row is NOT a definitive claim)' },
+      { re: /\bproven\b/, label: 'proven (outcome row is NOT proof)' },
+      { re: /\bcertain\b/, label: 'certain (outcome row is NOT certainty)' },
+      { re: /\breal\b/, label: 'real (outcome row is NOT a claim about real state)' },
+      { re: /\breality\b/, label: 'reality (outcome row is NOT reality)' },
+      { re: /\btruth\b/, label: 'truth (AN OUTCOME ROW IS NOT TRUTH)' },
     ],
   },
 ];

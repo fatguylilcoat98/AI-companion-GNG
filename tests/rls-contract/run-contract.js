@@ -1057,3 +1057,159 @@ test('governance_execution_attempts INSERT: replay (duplicate attempt for same c
     );
   });
 });
+
+// ---------------------------------------------------------------------
+// governance_execution_outcomes (GM-28): admin-only SELECT;
+// no proposer / reviewer / authorizer / claimant / attempter /
+// recorder-as-non-admin / family / caregiver visibility. INSERT
+// requires admin role + tenant + no impersonation.
+// UNIQUE(execution_attempt_id) enforces one outcome per attempt;
+// outcomes are OPTIONAL (missing rows are structurally valid).
+// Constitutional rule: AN OUTCOME ROW IS NOT TRUTH.
+// ---------------------------------------------------------------------
+
+const ADMIN5_A = 'aaaaaaaa-8888-1111-1111-aaaaaaaaaaaa';
+const ADMIN5_B = 'bbbbbbbb-8888-2222-2222-bbbbbbbbbbbb';
+const OUTCOME_A = 'aaaaaaaa-9999-1111-1111-e00000000001';
+const OUTCOME_B = 'bbbbbbbb-9999-2222-2222-f00000000001';
+const ATTEMPT_A_FOR_OUTCOME = 'aaaaaaaa-aaaa-1111-1111-c00000000001';
+
+test('governance_execution_outcomes: admin in pilot sees the recorded outcome', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_A, user: ADMIN_A, userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_outcomes', 'id');
+    assert.ok(ids.includes(OUTCOME_A), 'admin must see outcomes in pilot');
+    assert.equal(ids.includes(OUTCOME_B), false, 'admin must NOT see pilot-B outcomes');
+  });
+});
+
+test('governance_execution_outcomes: senior-A (proposer) sees nothing', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    assert.deepEqual(await visibleIds(client, 'governance_execution_outcomes', 'id'), []);
+  });
+});
+
+test('governance_execution_outcomes: family / caregiver see nothing', async () => {
+  const c = await setup();
+  for (const [user, role] of [[FAMILY_A, 'family'], [CAREGIVER_A, 'caregiver']]) {
+    await withContext(c, { role: 'lylo_app', pilot: PILOT_A, user, userRole: role }, async (client) => {
+      assert.deepEqual(await visibleIds(client, 'governance_execution_outcomes', 'id'), []);
+    });
+  }
+});
+
+test('governance_execution_outcomes: cross-pilot — pilot-B admin sees only pilot-B outcome', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_admin', pilot: PILOT_B, user: 'bbbbbbbb-4444-2222-2222-bbbbbbbbbbbb', userRole: 'admin',
+  }, async (client) => {
+    const ids = await visibleIds(client, 'governance_execution_outcomes', 'id');
+    assert.deepEqual(ids.sort(), [OUTCOME_B]);
+  });
+});
+
+test('governance_execution_outcomes: lylo_runtime has no grant — SELECT permission denied', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_runtime', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query('SELECT id FROM governance_execution_outcomes'),
+      /permission denied/i
+    );
+  });
+});
+
+test('governance_execution_outcomes INSERT: non-admin role rejected by WITH CHECK', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: SENIOR_A, userRole: 'senior',
+  }, async (client) => {
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_outcomes '
+          + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', 'reported_completed', $3, 'admin')",
+        [PILOT_A, ATTEMPT_A_FOR_OUTCOME, SENIOR_A]
+      ),
+      /row.level security|new row violates row.level/i
+    );
+  });
+});
+
+test('governance_execution_outcomes INSERT: admin cannot impersonate another recorded_by_user_id', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN5_A, userRole: 'admin',
+  }, async (client) => {
+    // Impersonate ADMIN4_A as recorder while connected as ADMIN5_A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_outcomes '
+          + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', 'reported_completed', $3, 'admin')",
+        [PILOT_A, ATTEMPT_A_FOR_OUTCOME, ADMIN4_A]
+      ),
+      /row.level security|new row violates row.level|duplicate key|unique/i
+    );
+  });
+});
+
+test('governance_execution_outcomes INSERT: cross-pilot rejected (composite FK + RLS)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN5_A, userRole: 'admin',
+  }, async (client) => {
+    // Try to record an outcome against pilot-B's attempt from pilot A.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_outcomes '
+          + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', 'reported_completed', $3, 'admin')",
+        [PILOT_B, 'bbbbbbbb-aaaa-2222-2222-d00000000001', ADMIN5_A]
+      ),
+      /row.level security|new row violates row.level|foreign key/i
+    );
+  });
+});
+
+test('governance_execution_outcomes INSERT: replay (duplicate outcome for same attempt) rejected (UNIQUE)', async () => {
+  const c = await setup();
+  await withContext(c, {
+    role: 'lylo_app', pilot: PILOT_A, user: ADMIN5_A, userRole: 'admin',
+  }, async (client) => {
+    // ATTEMPT_A_FOR_OUTCOME already has OUTCOME_A seeded; second outcome fails UNIQUE.
+    await assert.rejects(
+      () => client.query(
+        'INSERT INTO governance_execution_outcomes '
+          + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', 'reported_unknown', $3, 'admin')",
+        [PILOT_A, ATTEMPT_A_FOR_OUTCOME, ADMIN5_A]
+      ),
+      /duplicate key|unique/i
+    );
+  });
+});
+
+test('governance_execution_outcomes INSERT: outcome_type outside reported_* vocabulary rejected (CHECK)', async () => {
+  const c = await setup();
+  // Use superuser to bypass RLS so we hit the CHECK constraint
+  // directly (not the WITH CHECK policy).
+  for (const bad of ['completed', 'succeeded', 'failed', 'reported_succeeded', 'reported_failed', 'verified_completed']) {
+    await assert.rejects(
+      () => c.query(
+        'INSERT INTO governance_execution_outcomes '
+          + '(pilot_instance_id, execution_attempt_id, authorization_scope, execution_surface, outcome_type, recorded_by_user_id, recorded_by_role) '
+          + "VALUES ($1, $2, 'memory_candidate_admission', 'future_memory_admission_consumer', $3, $4, 'admin')",
+        [PILOT_A, ATTEMPT_A_FOR_OUTCOME, bad, ADMIN5_A]
+      ),
+      /check constraint|outcome_type/i,
+      `forbidden outcome_type "${bad}" must be rejected by CHECK constraint`
+    );
+  }
+});

@@ -59,13 +59,15 @@ GRANT SELECT ON pilot_instances, users, companion_profile, supported_person_prof
                 governance_review_decisions,
                 governance_execution_authorizations,
                 governance_execution_claims,
-                governance_execution_attempts
+                governance_execution_attempts,
+                governance_execution_outcomes
   TO lylo_app;
 GRANT INSERT ON memory_store, governance_audit_log, memory_vault_sessions,
                 governance_review_queue, governance_review_decisions,
                 governance_execution_authorizations,
                 governance_execution_claims,
-                governance_execution_attempts
+                governance_execution_attempts,
+                governance_execution_outcomes
   TO lylo_app;
 GRANT UPDATE (revoked_at) ON memory_vault_sessions TO lylo_app;
 
@@ -79,7 +81,8 @@ GRANT SELECT ON pilot_instances, users, companion_profile, supported_person_prof
                 governance_review_decisions,
                 governance_execution_authorizations,
                 governance_execution_claims,
-                governance_execution_attempts
+                governance_execution_attempts,
+                governance_execution_outcomes
   TO lylo_admin;
 
 -- ---------------------------------------------------------------------
@@ -102,6 +105,7 @@ ALTER TABLE governance_review_decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE governance_execution_authorizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE governance_execution_claims ENABLE ROW LEVEL SECURITY;
 ALTER TABLE governance_execution_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE governance_execution_outcomes ENABLE ROW LEVEL SECURITY;
 
 -- ---------------------------------------------------------------------
 -- Tenant-scoped SELECT policies.
@@ -360,6 +364,31 @@ CREATE POLICY attempt_insert_admin ON governance_execution_attempts FOR INSERT
   );
 
 CREATE POLICY attempt_admin_select ON governance_execution_attempts FOR SELECT
+  USING (
+    pilot_instance_id = NULLIF(current_setting('app.pilot_instance_id', true), '')::uuid
+    AND current_setting('app.user_role', true) = 'admin'
+  );
+
+-- ---------------------------------------------------------------------
+-- governance_execution_outcomes (GM-28): admin-only INSERT (with
+-- tenant + no-impersonation WITH CHECK) and admin-only SELECT.
+-- No proposer / reviewer / authorizer / claimant / attempter /
+-- recorder-as-non-admin / family / caregiver SELECT policy.
+-- Outcomes are admin-only governance metadata. No UPDATE/DELETE
+-- policies; append-only at the trigger layer (real schema).
+-- UNIQUE(execution_attempt_id) enforces one outcome per attempt;
+-- outcomes are OPTIONAL (missing rows are structurally valid).
+-- Constitutional rule: AN OUTCOME ROW IS NOT TRUTH.
+-- ---------------------------------------------------------------------
+
+CREATE POLICY outcome_insert_admin ON governance_execution_outcomes FOR INSERT
+  WITH CHECK (
+    pilot_instance_id = NULLIF(current_setting('app.pilot_instance_id', true), '')::uuid
+    AND recorded_by_user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+    AND current_setting('app.user_role', true) = 'admin'
+  );
+
+CREATE POLICY outcome_admin_select ON governance_execution_outcomes FOR SELECT
   USING (
     pilot_instance_id = NULLIF(current_setting('app.pilot_instance_id', true), '')::uuid
     AND current_setting('app.user_role', true) = 'admin'

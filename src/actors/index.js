@@ -1,19 +1,19 @@
 'use strict';
 /*
- * Actors public API — GM-22 through GM-27.
+ * Actors public API — GM-22 through GM-28.
  *
  * Decision-gated executors. Every actor's contract:
  *   1. Accept a Decision (instanceof + WeakSet-blessed + frozen +
  *      intent-type-correct + structural-vocabulary-valid + actor-
  *      specific outcome / role check).
  *   2. On admissible → execute (response-delivery actor) OR record
- *      a governance artifact (GM-23/24/25/26/27 actors).
+ *      a governance artifact (GM-23/24/25/26/27/28 actors).
  *   3. On requires_review → durably stage to the review queue
  *      (GM-23 review-queue actor).
  *   4. On inadmissible → return rejected outcome (no execution).
  *   5. On forged/tampered/mismatched Decision → throw.
  *
- * Six actors today:
+ * Seven actors today:
  *   - createResponseDeliveryActor (GM-22) — wraps the conversation
  *     runtime; admits ONLY decision.intentType === response.deliver.
  *   - createReviewQueueActor (GM-23) — stages requires_review
@@ -41,11 +41,21 @@
  *     equality; surface equality; UNIQUE(claim_id) forbids retry.
  *     Constitutional rule: ATTEMPT IS NOT OUTCOME. An attempt row
  *     records ONLY the beginning of an attempt.
+ *   - createExecutionOutcomeLedgerActor (GM-28) — records an
+ *     admin's observation of an attempt's apparent state, into
+ *     governance_execution_outcomes. Admin only; recorder ≠
+ *     attempter (5th separation-of-duties stage); scope + surface
+ *     equality with attempt; UNIQUE(attempt_id); outcome_type ∈
+ *     the 4-value `reported_*` vocabulary (observational, not
+ *     evaluative). Constitutional rule (strictest in the chain):
+ *     AN OUTCOME ROW IS NOT TRUTH. `reported_completed` ≠
+ *     `verified_completed`. Outcomes are OPTIONAL — missing rows
+ *     are structurally valid.
  *
  * Each actor has its own intent-type contract and its own outcome
  * routing. They share the OUTCOMES vocabulary (executed / abstained
  * / rejected / staged / recorded / authorized_recorded /
- * claim_recorded / attempt_recorded).
+ * claim_recorded / attempt_recorded / outcome_recorded).
  */
 
 const { createResponseDeliveryActor } = require('./response-delivery-actor');
@@ -54,6 +64,7 @@ const { createReviewDecisionActor } = require('./review-decision-actor');
 const { createExecutionAuthorizationActor } = require('./execution-authorization-actor');
 const { createExecutionClaimLedgerActor } = require('./execution-claim-ledger-actor');
 const { createExecutionAttemptLedgerActor } = require('./execution-attempt-ledger-actor');
+const { createExecutionOutcomeLedgerActor } = require('./execution-outcome-ledger-actor');
 const { OUTCOMES } = require('./outcomes');
 
 module.exports = {
@@ -63,5 +74,6 @@ module.exports = {
   createExecutionAuthorizationActor,
   createExecutionClaimLedgerActor,
   createExecutionAttemptLedgerActor,
+  createExecutionOutcomeLedgerActor,
   OUTCOMES,
 };
